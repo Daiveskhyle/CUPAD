@@ -1,0 +1,221 @@
+{
+    "zones": [
+        {
+            "id": "zone_688b83bc9db87",
+            "name": "Ondo"
+        },
+        {
+            "id": "zone_688b83ebe2763",
+            "name": "Osun"
+        },
+        {
+            "id": "zone_688b83f309ce0",
+            "name": "Oyo"
+        },
+        {
+            "id": "zone_688b83f81cfa6",
+            "name": "Ekiti"
+        }
+    ],
+    "areas": [
+        {
+            "id": "area_688b8425e8006",
+            "name": "Area 1",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        {
+            "id": "area_688b843a71d41",
+            "name": "Area 2",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        {
+            "id": "area_688ba3f9b30ed",
+            "name": "Area 1",
+            "zone_id": "zone_688b83bc9db87"
+        },
+        {
+            "id": "area_688ba56f9de1e",
+            "name": "Area 1",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        {
+            "id": "area_688ba57700476",
+            "name": "Area 2",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        {
+            "id": "area_688ba5847668c",
+            "name": "Area 1",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        {
+            "id": "area_688ba58bb3338",
+            "name": "Area 2",
+            "zone_id": "zone_688b83f81cfa6"
+        }
+    ],
+    "branches": {
+        "0": {
+            "id": "branch_688b844a1d842",
+            "name": "Ikirun",
+            "area_id": "area_688b8425e8006",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "1": {
+            "id": "branch_688ba260751be",
+            "name": "Beacon",
+            "area_id": "area_688b8425e8006",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "2": {
+            "id": "branch_688ba280c8ca1",
+            "name": "Ife 1",
+            "area_id": "area_688b8425e8006",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "3": {
+            "id": "branch_688ba29436a8e",
+            "name": "Ilesha",
+            "area_id": "area_688b8425e8006",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "4": {
+            "id": "branch_688ba2ae4cdaa",
+            "name": "Ijebujesha",
+            "area_id": "area_688b8425e8006",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "5": {
+            "id": "branch_688ba3177d34e",
+            "name": "Ife 2",
+            "area_id": "area_688b843a71d41",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "6": {
+            "id": "branch_688ba333c8ad9",
+            "name": "Ikire 1",
+            "area_id": "area_688b843a71d41",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "7": {
+            "id": "branch_688ba3400dd65",
+            "name": "Ikire 2",
+            "area_id": "area_688b843a71d41",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "8": {
+            "id": "branch_688ba3692fed1",
+            "name": "Iwo",
+            "area_id": "area_688b843a71d41",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "9": {
+            "id": "branch_688ba378943bb",
+            "name": "Ourlady",
+            "area_id": "area_688b843a71d41",
+            "zone_id": "zone_688b83ebe2763"
+        },
+        "11": {
+            "id": "branch_688ba54243b65",
+            "name": "Isinkan",
+            "area_id": "area_688ba3f9b30ed",
+            "zone_id": "zone_688b83bc9db87"
+        },
+        "12": {
+            "id": "branch_688ba54f2c8c1",
+            "name": "Adegbola",
+            "area_id": "area_688ba3f9b30ed",
+            "zone_id": "zone_688b83bc9db87"
+        },
+        "13": {
+            "id": "branch_68ef653765b48",
+            "name": "Owode",
+            "area_id": "area_688ba56f9de1e",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "14": {
+            "id": "branch_68ef654e8e00a",
+            "name": "Olorunsogo",
+            "area_id": "area_688ba56f9de1e",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "15": {
+            "id": "branch_68ef655c8d5d2",
+            "name": "Boluwaji",
+            "area_id": "area_688ba56f9de1e",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "16": {
+            "id": "branch_68ef6699e0192",
+            "name": "Olaogun",
+            "area_id": "area_688ba57700476",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "17": {
+            "id": "branch_68ef66aa11e5f",
+            "name": "Lalupon 1",
+            "area_id": "area_688ba57700476",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "18": {
+            "id": "branch_68ef66b77148e",
+            "name": "Lalupon 2",
+            "area_id": "area_688ba57700476",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "19": {
+            "id": "branch_68ef66c6680f7",
+            "name": "Alakia",
+            "area_id": "area_688ba57700476",
+            "zone_id": "zone_688b83f309ce0"
+        },
+        "20": {
+            "id": "branch_68ef680dd87e9",
+            "name": "Ikole",
+            "area_id": "area_688ba5847668c",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "21": {
+            "id": "branch_68ef686838a09",
+            "name": "Ikere",
+            "area_id": "area_688ba5847668c",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "22": {
+            "id": "branch_68ef6966e861b",
+            "name": "Ajilosun",
+            "area_id": "area_688ba5847668c",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "23": {
+            "id": "branch_68ef697a83b0a",
+            "name": "Adebayo",
+            "area_id": "area_688ba5847668c",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "24": {
+            "id": "branch_68ef69a45c170",
+            "name": "Ijero",
+            "area_id": "area_688ba58bb3338",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "25": {
+            "id": "branch_68ef69b60b345",
+            "name": "Ifaki",
+            "area_id": "area_688ba58bb3338",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "26": {
+            "id": "branch_68ef69c483064",
+            "name": "Ekute",
+            "area_id": "area_688ba58bb3338",
+            "zone_id": "zone_688b83f81cfa6"
+        },
+        "27": {
+            "id": "branch_696f9316efd43",
+            "name": "Ijoka",
+            "area_id": "area_688ba3f9b30ed",
+            "zone_id": "zone_688b83bc9db87"
+        }
+    }
+}
