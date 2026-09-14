@@ -11,20 +11,83 @@ function mobileUser(): array {
     return $user;
 }
 
-function mobileClientAllowed(array $user,string $clientId): void {
+function mobileScopeClause(array $user, string $alias='c'): array {
     $role = strtolower((string)$user['role']);
-    $sql = 'SELECT id FROM clients WHERE id=? AND deleted_at IS NULL';
-    $params = [$clientId];
-    if ($role === 'co') { $sql .= ' AND officer_username=?'; $params[] = $user['username']; }
-    elseif ($role === 'bm' && $user['branch_id'] !== null && $user['branch_id'] !== '') { $sql .= ' AND branch_id=?'; $params[] = $user['branch_id']; }
-    elseif ($role === 'am' && $user['area_id'] !== null && $user['area_id'] !== '') { $sql .= ' AND branch_id IN (SELECT id FROM branches WHERE area_id=?)'; $params[] = $user['area_id']; }
-    elseif (in_array($role,['zm','dzm','tm'],true) && $user['zone_id'] !== null && $user['zone_id'] !== '') { $sql .= ' AND branch_id IN (SELECT id FROM branches WHERE zone_id=? OR area_id IN (SELECT id FROM areas WHERE zone_id=?))'; $params[] = $user['zone_id']; $params[] = $user['zone_id']; }
-    $s = db()->prepare($sql.' LIMIT 1');
+    $where = ["{$alias}.deleted_at IS NULL"];
+    $params = [];
+    if ($role === 'co') {
+        $where[] = "{$alias}.officer_username=?";
+        $params[] = $user['username'];
+    } elseif ($role === 'bm' && $user['branch_id'] !== null && $user['branch_id'] !== '') {
+        $where[] = "{$alias}.branch_id=?";
+        $params[] = $user['branch_id'];
+    } elseif ($role === 'am' && $user['area_id'] !== null && $user['area_id'] !== '') {
+        $where[] = "{$alias}.branch_id IN (SELECT id FROM branches WHERE area_id=?)";
+        $params[] = $user['area_id'];
+    } elseif (in_array($role,['zm','dzm','tm'],true) && $user['zone_id'] !== null && $user['zone_id'] !== '') {
+        $where[] = "{$alias}.branch_id IN (SELECT id FROM branches WHERE zone_id=? OR area_id IN (SELECT id FROM areas WHERE zone_id=?))";
+        $params[] = $user['zone_id'];
+        $params[] = $user['zone_id'];
+    }
+    return [implode(' AND ', $where), $params];
+}
+
+function mobileClientAllowed(array $user,string $clientId): void {
+    [$scope,$params] = mobileScopeClause($user,'c');
+    $sql = "SELECT c.id FROM clients c WHERE c.id=? AND {$scope} LIMIT 1";
+    array_unshift($params, $clientId);
+    $s = db()->prepare($sql);
     $s->execute($params);
     if (!$s->fetch()) respond(['success'=>false,'error'=>'Client not found or access denied'],403);
 }
 
 function mobileTxn(string $prefix): string { return $prefix.date('YmdHis').mt_rand(1000,9999); }
+
+if ($method === 'GET' && $route === 'dashboard/stats') {
+    $user = mobileUser();
+    [$scope,$scopeParams] = mobileScopeClause($user,'c');
+    $pdo = db();
+    $scalar = static function(string $sql, array $params=[]) use ($pdo) {
+        $s=$pdo->prepare($sql); $s->execute($params); return $s->fetchColumn();
+    };
+
+    $clients=(int)$scalar("SELECT COUNT(*) FROM clients c WHERE {$scope}",$scopeParams);
+    $totalSavings=(float)$scalar("SELECT COALESCE(SUM(s.balance),0) FROM savings s JOIN clients c ON c.id=s.client_id WHERE s.status<>'closed' AND {$scope}",$scopeParams);
+    $outstanding=(float)$scalar("SELECT COALESCE(SUM(d.remaining_balance),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.remaining_balance>0 AND {$scope}",$scopeParams);
+    $activeLoans=(int)$scalar("SELECT COUNT(*) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.remaining_balance>0 AND {$scope}",$scopeParams);
+    $monthlyDisbursed=(float)$scalar("SELECT COALESCE(SUM(d.principal),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.date>=DATE_FORMAT(CURDATE(),'%Y-%m-01') AND {$scope}",$scopeParams);
+    $collectedToday=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE DATE(lc.date)=CURDATE() AND {$scope}",$scopeParams);
+    $collectedMonth=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE lc.date>=DATE_FORMAT(CURDATE(),'%Y-%m-01') AND {$scope}",$scopeParams);
+    $savingsToday=(float)$scalar("SELECT COALESCE(SUM(sc.amount),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.amount>0 AND DATE(sc.date)=CURDATE() AND {$scope}",$scopeParams);
+    $netSavingsMonth=(float)$scalar("SELECT COALESCE(SUM(sc.amount),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.date>=DATE_FORMAT(CURDATE(),'%Y-%m-01') AND {$scope}",$scopeParams);
+
+    $unions=[];
+    try {
+        $sql="SELECT COALESCE(NULLIF(c.union,''),'Unassigned') name, COUNT(DISTINCT c.id) clients,
+                     COALESCE((SELECT SUM(s2.balance) FROM savings s2 WHERE s2.client_id IN (SELECT c2.id FROM clients c2 WHERE c2.union=c.union AND {$scope})),0) savings,
+                     COALESCE((SELECT SUM(d2.remaining_balance) FROM disbursements d2 WHERE d2.client_id IN (SELECT c3.id FROM clients c3 WHERE c3.union=c.union AND {$scope})),0) loans
+              FROM clients c WHERE {$scope} GROUP BY c.union ORDER BY clients DESC LIMIT 20";
+        $s=$pdo->prepare($sql);
+        $s->execute(array_merge($scopeParams,$scopeParams,$scopeParams,$scopeParams));
+        $unions=$s->fetchAll();
+    } catch(Throwable $e) { $unions=[]; }
+
+    respond(['success'=>true,'data'=>[
+        'monthly_net_savings'=>$netSavingsMonth,
+        'monthly_disbursed'=>$monthlyDisbursed,
+        'active_loans'=>$activeLoans,
+        'total_savings'=>$totalSavings,
+        'total_loans_outstanding'=>$outstanding,
+        'portfolio_net'=>$totalSavings-$outstanding,
+        'clients'=>$clients,
+        'savings_today'=>$savingsToday,
+        'collected_today'=>$collectedToday,
+        'collected_month'=>$collectedMonth,
+        'net_savings_month'=>$netSavingsMonth,
+        'outstanding'=>$outstanding,
+        'unions'=>$unions,
+    ]]);
+}
 
 if ($method === 'GET' && $route === 'activities') {
     $user = mobileUser();
@@ -65,7 +128,7 @@ if ($method === 'POST' && $route === 'loans/collect') {
 if ($method === 'POST' && $route === 'loans/disburse') {
     $user=mobileUser(); $b=jsonBody(); $clientId=trim((string)($b['client_id']??'')); $principal=(float)($b['principal']??0); $interest=(float)($b['interest_rate']??0); $installments=max(1,(int)($b['num_installments']??12)); $term=in_array($b['loan_term_type']??'', ['daily','weekly','monthly'],true)?$b['loan_term_type']:'weekly';
     if($clientId===''||$principal<=0)respond(['success'=>false,'error'=>'client_id and principal required'],422); mobileClientAllowed($user,$clientId); if($interest<0)respond(['success'=>false,'error'=>'Invalid interest rate'],422); $total=$principal*(1+$interest/100);
-    try{$s=db()->prepare("INSERT INTO disbursements (client_id,principal,interest_rate,total_payable,remaining_balance,num_installments,loan_term_type,date,officer,status) VALUES (?,?,?,?,?,?,?,CURDATE(),?,'active')");$s->execute([$clientId,$principal,$interest,$total,$total,$installments,$term,$user['username']]);respond(['success'=>true,'disbursement_id'=>(int)db()->lastInsertId(),'total_payable'=>$total,'message'=>'Loan disbursed']);}
+    try{$pdo=db();$s=$pdo->prepare("INSERT INTO disbursements (client_id,principal,interest_rate,total_payable,remaining_balance,num_installments,loan_term_type,date,officer,status) VALUES (?,?,?,?,?,?,?,CURDATE(),?,'active')");$s->execute([$clientId,$principal,$interest,$total,$total,$installments,$term,$user['username']]);respond(['success'=>true,'disbursement_id'=>(int)$pdo->lastInsertId(),'total_payable'=>$total,'message'=>'Loan disbursed']);}
     catch(Throwable $e){respond(['success'=>false,'error'=>'Unable to disburse loan'],500);}
 }
 
