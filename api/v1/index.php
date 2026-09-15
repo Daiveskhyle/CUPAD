@@ -8,6 +8,21 @@ $parts=$path===''?[]:explode('/',$path);
 while($parts && ($parts[0]==='api'||$parts[0]==='v1')) array_shift($parts);
 $route=implode('/',$parts);
 
+/* Serve uploaded profile pictures before the API router handles /uploads paths. */
+if($method==='GET' && preg_match('#^uploads/profile/([A-Za-z0-9._-]+)$#',$route,$m)){
+    $filename=$m[1];
+    $file=__DIR__.'/uploads/profile/'.$filename;
+    if(!is_file($file)) respond(['success'=>false,'error'=>'Image not found'],404);
+    $mime=function_exists('mime_content_type') ? mime_content_type($file) : null;
+    $allowed=['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'];
+    if(!$mime || !isset($allowed[$mime])) respond(['success'=>false,'error'=>'Invalid image'],404);
+    header('Content-Type: '.$mime);
+    header('Content-Length: '.(string)filesize($file));
+    header('Cache-Control: public, max-age=86400');
+    readfile($file);
+    exit;
+}
+
 /* Mobile endpoints are loaded first so they can handle their routes and share the same JWT/scope helpers. */
 require_once __DIR__ . '/mobile-writes.php';
 
