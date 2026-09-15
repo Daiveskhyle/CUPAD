@@ -25,17 +25,35 @@ if($method==='GET' && $route==='openapi.json'){
     echo file_get_contents(dirname(__DIR__).'/openapi.json'); exit;
 }
 
+/*
+ * Location mapping follows the CUPAD hierarchy used by the CO dashboard:
+ * Branch -> Area -> Zone. The user's explicit area/zone assignments are
+ * preferred, while the branch hierarchy provides a reliable fallback.
+ */
+$locationSelect = "
+    b.name AS branch_name,
+    a.name AS area_name,
+    z.name AS zone_name
+";
+$locationJoins = "
+    LEFT JOIN branches b ON u.branch_id = b.id
+    LEFT JOIN areas a ON a.id = COALESCE(u.area_id, b.area_id)
+    LEFT JOIN zones z ON z.id = COALESCE(u.zone_id, a.zone_id)
+";
+
 if($method==='POST' && $route==='auth/login'){
     $b=jsonBody(); $username=trim((string)($b['username']??'')); $password=(string)($b['password']??'');
     if($username===''||$password==='') respond(['success'=>false,'error'=>'username and password are required'],422);
-    $s=db()->prepare("SELECT id,username,password,name,full_name,email,phone,role,branch_id,area_id,zone_id,status FROM users WHERE username=? LIMIT 1");
+    $s=db()->prepare("SELECT u.id,u.username,u.password,u.name,u.full_name,u.email,u.phone,u.role,u.branch_id,u.area_id,u.zone_id,u.status,u.profile_pic,$locationSelect FROM users u $locationJoins WHERE u.username=? LIMIT 1");
     $s->execute([$username]); $u=$s->fetch();
     if(!$u || $u['status']!=='active' || !(password_verify($password,(string)$u['password']) || hash_equals((string)$u['password'],$password))) respond(['success'=>false,'error'=>'Invalid credentials'],401);
     $now=time(); $token=jwtEncode(['sub'=>(int)$u['id'],'username'=>$u['username'],'role'=>$u['role'],'iat'=>$now,'exp'=>$now+86400]);
     unset($u['password']); respond(['success'=>true,'token'=>$token,'expires_at'=>date('c',$now+86400),'user'=>$u]);
 }
 if($method==='GET' && $route==='me'){
-    $auth=requireJwt(); $s=db()->prepare('SELECT id,username,name,full_name,email,phone,role,branch_id,area_id,zone_id,profile_pic,status,last_login FROM users WHERE id=?'); $s->execute([(int)$auth['sub']]);
+    $auth=requireJwt();
+    $s=db()->prepare("SELECT u.id,u.username,u.name,u.full_name,u.email,u.phone,u.role,u.branch_id,u.area_id,u.zone_id,u.profile_pic,u.status,u.last_login,$locationSelect FROM users u $locationJoins WHERE u.id=?");
+    $s->execute([(int)$auth['sub']]);
     respond(['success'=>true,'data'=>$s->fetch()?:null]);
 }
 
