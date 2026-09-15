@@ -36,7 +36,9 @@ if ($method === 'GET' && $route === 'dashboard/stats') {
     $user=mobileUser(); [$scope,$scopeParams]=mobileScopeClause($user,'c'); $pdo=db();
     $scalar=static function(string $sql,array $params=[]) use($pdo){$s=$pdo->prepare($sql);$s->execute($params);return $s->fetchColumn();};
 
-    $clients=(int)$scalar("SELECT COUNT(*) FROM clients c WHERE {$scope}",$scopeParams);
+    // Match the CO dashboard: count only active clients in the officer's portfolio.
+    $clientsScope = $scope . " AND c.status='active'";
+    $clients=(int)$scalar("SELECT COUNT(*) FROM clients c WHERE {$clientsScope}",$scopeParams);
 
     // PHP dashboard uses saving_balances for portfolio total savings.
     $totalSavings=(float)$scalar("SELECT COALESCE(SUM(sb.balance),0) FROM saving_balances sb JOIN clients c ON c.id=sb.client_id WHERE {$scope}",$scopeParams);
@@ -55,7 +57,7 @@ if ($method === 'GET' && $route === 'dashboard/stats') {
     // Exactly follows PHP: deposits are positive; withdrawal/return/adjust are negative.
     $netSavingsMonth=(float)$scalar("SELECT COALESCE(SUM(CASE WHEN sc.amount<0 OR LOWER(sc.type) IN ('withdrawal','return','adjust') THEN -ABS(sc.amount) ELSE sc.amount END),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.officer=? AND DATE_FORMAT(sc.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
 
-    // Build union performance using the same client-by-client calculation as PHP.
+    // Build union performance using the same active client-by-client calculation as PHP.
     $unionStats=[];
     $sqlUnion="SELECT c.id,c.`union`,
         (SELECT balance FROM saving_balances WHERE client_id=c.id LIMIT 1) AS total_savings,
