@@ -66,14 +66,12 @@ if ($method === 'PUT' && $route === 'profile') {
 
     $savedPic = null;
     if ($profilePic !== '') {
-        if (!preg_match('#^data:image/(jpeg|jpg|png|webp);base64,#i', $profilePic, $m)) {
-            respond(['success'=>false,'error'=>'Unsupported profile picture format'],422);
-        }
+        if (!preg_match('#^data:image/(jpeg|jpg|png|webp);base64,#i', $profilePic, $m)) respond(['success'=>false,'error'=>'Unsupported profile picture format'],422);
         $raw = base64_decode(preg_replace('#^data:image/[^;]+;base64,#i', '', $profilePic), true);
         if ($raw === false || strlen($raw) > 2 * 1024 * 1024) respond(['success'=>false,'error'=>'Profile picture must be 2MB or smaller'],422);
         $dir = dirname(__DIR__) . '/uploads/profile';
         if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) respond(['success'=>false,'error'=>'Unable to prepare profile picture storage'],500);
-        $ext = strtolower($m[1]) === 'jpeg' || strtolower($m[1]) === 'jpg' ? 'jpg' : strtolower($m[1]);
+        $ext = in_array(strtolower($m[1]), ['jpeg','jpg'], true) ? 'jpg' : strtolower($m[1]);
         $filename = 'user_' . $userId . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
         if (file_put_contents($dir . '/' . $filename, $raw) === false) respond(['success'=>false,'error'=>'Unable to save profile picture'],500);
         $savedPic = '/api/v1/uploads/profile/' . $filename;
@@ -91,7 +89,12 @@ if ($method === 'PUT' && $route === 'profile') {
     $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=?')->execute($params);
     $s = $pdo->prepare('SELECT id,username,name,full_name,email,phone,role,branch_id,area_id,zone_id,profile_pic,status,last_login FROM users WHERE id=? LIMIT 1');
     $s->execute([$userId]);
-    respond(['success'=>true,'data'=>$s->fetch(),'message'=>'Profile updated successfully']);
+    $updated = $s->fetch();
+    if ($updated && !empty($updated['profile_pic']) && str_starts_with((string)$updated['profile_pic'], '/')) {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $updated['profile_pic'] = $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? '') . $updated['profile_pic'];
+    }
+    respond(['success'=>true,'data'=>$updated,'message'=>'Profile updated successfully']);
 }
 
 /* Dashboard statistics deliberately mirror co/dashboard.php. */
