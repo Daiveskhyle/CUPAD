@@ -74,8 +74,6 @@ if (in_array($method, ['PUT','POST'], true) && $route === 'profile') {
         if ($raw === false || strlen($raw) > 2 * 1024 * 1024) {
             respond(['success'=>false,'error'=>'Profile picture must be 2MB or smaller'],422);
         }
-
-        // mobile-writes.php is located in api/v1/, so the public file path is api/v1/uploads/profile/.
         $dir = __DIR__ . '/uploads/profile';
         if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
             respond(['success'=>false,'error'=>'Unable to prepare profile picture storage'],500);
@@ -109,34 +107,116 @@ if (in_array($method, ['PUT','POST'], true) && $route === 'profile') {
     respond(['success'=>true,'data'=>$updated,'message'=>'Profile updated successfully']);
 }
 
-/* Dashboard statistics deliberately mirror co/dashboard.php. */
+/* Dashboard statistics intentionally mirror co/dashboard.php exactly. */
 if ($method === 'GET' && $route === 'dashboard/stats') {
-    $user=mobileUser(); [$scope,$scopeParams]=mobileScopeClause($user,'c'); $pdo=db();
-    $scalar=static function(string $sql,array $params=[]) use($pdo){$s=$pdo->prepare($sql);$s->execute($params);return $s->fetchColumn();};
-    $clientsScope = $scope . " AND c.status='active'";
-    $clients=(int)$scalar("SELECT COUNT(*) FROM clients c WHERE {$clientsScope}",$scopeParams);
-    $totalSavings=(float)$scalar("SELECT COALESCE(SUM(sb.balance),0) FROM saving_balances sb JOIN clients c ON c.id=sb.client_id WHERE {$scope}",$scopeParams);
-    $activeLoans=(int)$scalar("SELECT COUNT(DISTINCT d.client_id) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.status!='completed' AND d.remaining_balance>0 AND {$scope}",$scopeParams);
-    $outstanding=(float)$scalar("SELECT COALESCE(SUM(d.remaining_balance),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.status!='completed' AND d.remaining_balance>0 AND {$scope}",$scopeParams);
-    $monthlyDisbursed=(float)$scalar("SELECT COALESCE(SUM(d.principal),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.officer=? AND DATE_FORMAT(d.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-    $collectedToday=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE lc.officer=? AND DATE(lc.date)=CURDATE() AND {$scope}",array_merge([$user['username']],$scopeParams));
-    $collectedMonth=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE lc.officer=? AND DATE_FORMAT(lc.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-    $savingsToday=(float)$scalar("SELECT COALESCE(SUM(sc.amount),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.officer=? AND sc.type='deposit' AND DATE(sc.date)=CURDATE() AND {$scope}",array_merge([$user['username']],$scopeParams));
-    $netSavingsMonth=(float)$scalar("SELECT COALESCE(SUM(CASE WHEN sc.amount<0 OR LOWER(sc.type) IN ('withdrawal','return','adjust') THEN -ABS(sc.amount) ELSE sc.amount END),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.officer=? AND DATE_FORMAT(sc.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-    $unionStats=[];
-    $sqlUnion="SELECT c.id,c.`union`, (SELECT balance FROM saving_balances WHERE client_id=c.id LIMIT 1) AS total_savings, COALESCE(l.active_balance,0) AS loan_balance FROM clients c LEFT JOIN (SELECT client_id,SUM(remaining_balance) AS active_balance FROM disbursements WHERE status!='completed' AND remaining_balance>0 GROUP BY client_id) l ON c.id=l.client_id WHERE {$scope} AND c.status='active'";
-    $stmt=$pdo->prepare($sqlUnion); $stmt->execute($scopeParams); $grandSavings=0.0; $grandLoans=0.0;
-    while($row=$stmt->fetch(PDO::FETCH_ASSOC)){
-        $savings=(float)($row['total_savings']??0); $loans=(float)($row['loan_balance']??0); $grandSavings += $savings; $grandLoans += $loans;
-        $name=trim((string)($row['union']??'')); $name=$name===''?'Unassigned':ucwords(strtolower($name));
-        if(!isset($unionStats[$name])) $unionStats[$name]=['name'=>$name,'clients'=>0,'savings'=>0,'loans'=>0];
-        $unionStats[$name]['clients']++; $unionStats[$name]['savings'] += $savings; $unionStats[$name]['loans'] += $loans;
+    $user = mobileUser();
+    $username = $user['username'];
+    $pdo = db();
+    $currentMonth = date('Y-m');
+
+    $scalar = static function(string $sql, array $params = []) use ($pdo) {
+        $s = $pdo->prepare($sql);
+        $s->execute($params);
+        return $s->fetchColumn();
+    };
+
+    // PHP CO dashboard: COUNT active clients assigned directly to this CO.
+    $clients = (int)$scalar(
+        "SELECT COUNT(*) FROM clients WHERE officer_username=? AND status='active'",
+        [$username]
+    );
+
+    // PHP CO dashboard: monthly net savings directly from saving_collections.
+    $netSavingsMonth = (float)$scalar(
+        "SELECT COALESCE(SUM(CASE WHEN amount < 0 OR LOWER(type) IN ('withdrawal','return','adjust') THEN -ABS(amount) ELSE amount END),0)
+         FROM saving_collections WHERE officer=? AND DATE_FORMAT(date,'%Y-%m')=?",
+        [$username, $currentMonth]
+    );
+
+    // PHP CO dashboard: monthly disbursement directly from disbursements.
+    $monthlyDisbursed = (float)$scalar(
+        "SELECT COALESCE(SUM(principal),0) FROM disbursements WHERE officer=? AND DATE_FORMAT(date,'%Y-%m')=?",
+        [$username, $currentMonth]
+    );
+
+    // PHP CO dashboard: active loans are based on the CO's disbursements, not client deleted_at.
+    $activeLoans = (int)$scalar(
+        "SELECT COUNT(DISTINCT client_id) FROM disbursements WHERE officer=? AND status!='completed' AND remaining_balance>0",
+        [$username]
+    );
+
+    // PHP CO dashboard portfolio/union query: active clients assigned to this CO.
+    $sqlUnion = "
+        SELECT c.id,c.`union`,
+               (SELECT balance FROM saving_balances WHERE client_id=c.id LIMIT 1) AS total_savings,
+               COALESCE(l.active_balance,0) AS loan_balance
+        FROM clients c
+        LEFT JOIN (
+            SELECT client_id,SUM(remaining_balance) AS active_balance
+            FROM disbursements
+            WHERE status!='completed' AND remaining_balance>0
+            GROUP BY client_id
+        ) l ON c.id=l.client_id
+        WHERE c.officer_username=? AND c.status='active'
+    ";
+    $stmt = $pdo->prepare($sqlUnion);
+    $stmt->execute([$username]);
+
+    $grandSavings = 0.0;
+    $grandLoans = 0.0;
+    $unionStats = [];
+
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $savings = (float)($row['total_savings'] ?? 0);
+        $loans = (float)($row['loan_balance'] ?? 0);
+        $grandSavings += $savings;
+        $grandLoans += $loans;
+
+        $name = trim((string)($row['union'] ?? ''));
+        $name = $name === '' ? 'Unassigned' : ucwords(strtolower($name));
+
+        if (!isset($unionStats[$name])) {
+            $unionStats[$name] = ['name'=>$name,'clients'=>0,'savings'=>0,'loans'=>0];
+        }
+        $unionStats[$name]['clients']++;
+        $unionStats[$name]['savings'] += $savings;
+        $unionStats[$name]['loans'] += $loans;
     }
-    ksort($unionStats,SORT_NATURAL|SORT_FLAG_CASE); $unions=array_values($unionStats);
-    respond(['success'=>true,'data'=>['monthly_net_savings'=>$netSavingsMonth,'monthly_disbursed'=>$monthlyDisbursed,'active_loans'=>$activeLoans,'total_savings'=>$grandSavings,'total_loans_outstanding'=>$grandLoans,'portfolio_net'=>$grandSavings-$grandLoans,'clients'=>$clients,'savings_today'=>$savingsToday,'collected_today'=>$collectedToday,'collected_month'=>$collectedMonth,'net_savings_month'=>$netSavingsMonth,'outstanding'=>$grandLoans,'unions'=>$unions]]);
+
+    ksort($unionStats, SORT_NATURAL | SORT_FLAG_CASE);
+    $unions = array_values($unionStats);
+
+    $collectedToday = (float)$scalar(
+        "SELECT COALESCE(SUM(amount_collected),0) FROM loan_collections WHERE officer=? AND DATE(date)=CURDATE()",
+        [$username]
+    );
+    $collectedMonth = (float)$scalar(
+        "SELECT COALESCE(SUM(amount_collected),0) FROM loan_collections WHERE officer=? AND DATE_FORMAT(date,'%Y-%m')=?",
+        [$username, $currentMonth]
+    );
+    $savingsToday = (float)$scalar(
+        "SELECT COALESCE(SUM(amount),0) FROM saving_collections WHERE officer=? AND type='deposit' AND DATE(date)=CURDATE()",
+        [$username]
+    );
+
+    respond(['success'=>true,'data'=>[
+        'monthly_net_savings'=>$netSavingsMonth,
+        'monthly_disbursed'=>$monthlyDisbursed,
+        'active_loans'=>$activeLoans,
+        'total_savings'=>$grandSavings,
+        'total_loans_outstanding'=>$grandLoans,
+        'portfolio_net'=>$grandSavings-$grandLoans,
+        'clients'=>$clients,
+        'savings_today'=>$savingsToday,
+        'collected_today'=>$collectedToday,
+        'collected_month'=>$collectedMonth,
+        'net_savings_month'=>$netSavingsMonth,
+        'outstanding'=>$grandLoans,
+        'unions'=>$unions
+    ]]);
 }
 
-/* Activity feed deliberately mirrors the PHP CO dashboard and does not depend on optional transaction_id columns. */
+/* Activity feed deliberately mirrors the PHP CO dashboard. */
 if ($method === 'GET' && $route === 'activities') {
     $user=mobileUser();
     $limit=min(100,max(1,(int)($_GET['limit']??7)));
@@ -187,7 +267,7 @@ if ($method === 'POST' && $route === 'loans/collect') {
 if ($method === 'POST' && $route === 'loans/disburse') {
     $user=mobileUser();$b=jsonBody();$clientId=trim((string)($b['client_id']??''));$principal=(float)($b['principal']??0);$interest=(float)($b['interest_rate']??0);$installments=max(1,(int)($b['num_installments']??12));$term=in_array($b['loan_term_type']??'', ['daily','weekly','monthly'],true)?$b['loan_term_type']:'weekly';
     if($clientId===''||$principal<=0)respond(['success'=>false,'error'=>'client_id and principal required'],422);mobileClientAllowed($user,$clientId);if($interest<0)respond(['success'=>false,'error'=>'Invalid interest rate'],422);$total=$principal*(1+$interest/100);
-    try{$pdo=db();$s=$pdo->prepare("INSERT INTO disbursements (client_id,principal,interest_rate,total_payable,remaining_balance,num_installments,loan_term_type,date,officer,status) VALUES (?,?,?,?,?,?,?,CURDATE(),?,'active')");$s->execute([$clientId,$principal,$interest,$total,$total,$installments,$term,$user['username']]);respond(['success'=>true,'disbursement_id'=>(int)$pdo->lastInsertId(),'total_payable'=>$total,'message'=>'Loan disbursed']);}catch(Throwable $e){respond(['success'=>false,'error'=>'Unable to disburse loan'],500);}
+    try{$pdo=db();$s=$pdo->prepare("INSERT INTO disbursements (client_id,principal,interest_rate,total_payable,remaining_balance,num_installments,loan_term_type,date,officer,status) VALUES (?,?,?,?,?,?,?,CURDATE(),?,'active')");$s->execute([$clientId,$principal,$interest,$total,$total,$installments,$term,$user['username']]);respond(['success'=>true,'disbursement_id'=>(int)$pdo->lastInsertId(),'total_payable'=>$total,'message'=>'Loan disbursed']);}catch(Throwable $e){respond(['success'=>false,'error'=>'Unable to record loan disbursement'],500);}
 }
 
 if ($method === 'POST' && $route === 'clients/register') {
