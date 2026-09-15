@@ -31,6 +31,69 @@ function mobileClientAllowed(array $user,string $clientId): void {
 
 function mobileTxn(string $prefix): string { return $prefix.date('YmdHis').mt_rand(1000,9999); }
 
+/* Update the authenticated mobile user's editable profile fields. */
+if ($method === 'PUT' && $route === 'profile') {
+    $auth = requireJwt();
+    $userId = (int)($auth['sub'] ?? 0);
+    if ($userId <= 0) respond(['success'=>false,'error'=>'Invalid user session'],401);
+    $b = jsonBody();
+    $fullName = trim((string)($b['full_name'] ?? $b['name'] ?? ''));
+    $email = trim((string)($b['email'] ?? ''));
+    $currentPassword = (string)($b['current_password'] ?? '');
+    $newPassword = (string)($b['new_password'] ?? '');
+    $profilePic = (string)($b['profile_pic'] ?? '');
+
+    if ($fullName !== '' && mb_strlen($fullName) < 2) respond(['success'=>false,'error'=>'Name is too short'],422);
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) respond(['success'=>false,'error'=>'Enter a valid email address'],422);
+    if ($newPassword !== '' && strlen($newPassword) < 6) respond(['success'=>false,'error'=>'New password must be at least 6 characters'],422);
+    if ($newPassword !== '' && $currentPassword === '') respond(['success'=>false,'error'=>'Current password is required to change your password'],422);
+
+    $pdo = db();
+    $s = $pdo->prepare('SELECT id,name,full_name,email,password,profile_pic FROM users WHERE id=? AND status="active" LIMIT 1');
+    $s->execute([$userId]);
+    $current = $s->fetch();
+    if (!$current) respond(['success'=>false,'error'=>'User not found'],404);
+
+    if ($newPassword !== '' && !(password_verify($currentPassword, (string)$current['password']) || hash_equals((string)$current['password'], $currentPassword))) {
+        respond(['success'=>false,'error'=>'Current password is incorrect'],422);
+    }
+
+    if ($email !== '' && strcasecmp($email, (string)$current['email']) !== 0) {
+        $s = $pdo->prepare('SELECT id FROM users WHERE LOWER(email)=LOWER(?) AND id<>? LIMIT 1');
+        $s->execute([$email, $userId]);
+        if ($s->fetch()) respond(['success'=>false,'error'=>'That email address is already in use'],409);
+    }
+
+    $savedPic = null;
+    if ($profilePic !== '') {
+        if (!preg_match('#^data:image/(jpeg|jpg|png|webp);base64,#i', $profilePic, $m)) {
+            respond(['success'=>false,'error'=>'Unsupported profile picture format'],422);
+        }
+        $raw = base64_decode(preg_replace('#^data:image/[^;]+;base64,#i', '', $profilePic), true);
+        if ($raw === false || strlen($raw) > 2 * 1024 * 1024) respond(['success'=>false,'error'=>'Profile picture must be 2MB or smaller'],422);
+        $dir = dirname(__DIR__) . '/uploads/profile';
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) respond(['success'=>false,'error'=>'Unable to prepare profile picture storage'],500);
+        $ext = strtolower($m[1]) === 'jpeg' || strtolower($m[1]) === 'jpg' ? 'jpg' : strtolower($m[1]);
+        $filename = 'user_' . $userId . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+        if (file_put_contents($dir . '/' . $filename, $raw) === false) respond(['success'=>false,'error'=>'Unable to save profile picture'],500);
+        $savedPic = '/api/v1/uploads/profile/' . $filename;
+    }
+
+    $sets = [];
+    $params = [];
+    if ($fullName !== '') { $sets[] = 'name=?'; $params[] = $fullName; $sets[] = 'full_name=?'; $params[] = $fullName; }
+    if ($email !== '') { $sets[] = 'email=?'; $params[] = $email; }
+    if ($newPassword !== '') { $sets[] = 'password=?'; $params[] = password_hash($newPassword, PASSWORD_DEFAULT); }
+    if ($savedPic !== null) { $sets[] = 'profile_pic=?'; $params[] = $savedPic; }
+    if (!$sets) respond(['success'=>false,'error'=>'No profile changes supplied'],422);
+
+    $params[] = $userId;
+    $pdo->prepare('UPDATE users SET ' . implode(',', $sets) . ' WHERE id=?')->execute($params);
+    $s = $pdo->prepare('SELECT id,username,name,full_name,email,phone,role,branch_id,area_id,zone_id,profile_pic,status,last_login FROM users WHERE id=? LIMIT 1');
+    $s->execute([$userId]);
+    respond(['success'=>true,'data'=>$s->fetch(),'message'=>'Profile updated successfully']);
+}
+
 /* Dashboard statistics deliberately mirror co/dashboard.php. */
 if ($method === 'GET' && $route === 'dashboard/stats') {
     $user=mobileUser(); [$scope,$scopeParams]=mobileScopeClause($user,'c'); $pdo=db();
