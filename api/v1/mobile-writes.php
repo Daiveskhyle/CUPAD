@@ -35,89 +35,57 @@ function mobileTxn(string $prefix): string { return $prefix.date('YmdHis').mt_ra
 if ($method === 'GET' && $route === 'dashboard/stats') {
     $user=mobileUser(); [$scope,$scopeParams]=mobileScopeClause($user,'c'); $pdo=db();
     $scalar=static function(string $sql,array $params=[]) use($pdo){$s=$pdo->prepare($sql);$s->execute($params);return $s->fetchColumn();};
-
-    // Match the CO dashboard: count only active clients in the officer's portfolio.
     $clientsScope = $scope . " AND c.status='active'";
     $clients=(int)$scalar("SELECT COUNT(*) FROM clients c WHERE {$clientsScope}",$scopeParams);
-
-    // PHP dashboard uses saving_balances for portfolio total savings.
     $totalSavings=(float)$scalar("SELECT COALESCE(SUM(sb.balance),0) FROM saving_balances sb JOIN clients c ON c.id=sb.client_id WHERE {$scope}",$scopeParams);
-
-    // PHP dashboard counts distinct clients with active outstanding loans.
     $activeLoans=(int)$scalar("SELECT COUNT(DISTINCT d.client_id) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.status!='completed' AND d.remaining_balance>0 AND {$scope}",$scopeParams);
     $outstanding=(float)$scalar("SELECT COALESCE(SUM(d.remaining_balance),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.status!='completed' AND d.remaining_balance>0 AND {$scope}",$scopeParams);
-
     $monthlyDisbursed=(float)$scalar("SELECT COALESCE(SUM(d.principal),0) FROM disbursements d JOIN clients c ON c.id=d.client_id WHERE d.officer=? AND DATE_FORMAT(d.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-
     $collectedToday=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE lc.officer=? AND DATE(lc.date)=CURDATE() AND {$scope}",array_merge([$user['username']],$scopeParams));
     $collectedMonth=(float)$scalar("SELECT COALESCE(SUM(lc.amount_collected),0) FROM loan_collections lc JOIN clients c ON c.id=lc.client_id WHERE lc.officer=? AND DATE_FORMAT(lc.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-
     $savingsToday=(float)$scalar("SELECT COALESCE(SUM(sc.amount),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.officer=? AND sc.type='deposit' AND DATE(sc.date)=CURDATE() AND {$scope}",array_merge([$user['username']],$scopeParams));
-
-    // Exactly follows PHP: deposits are positive; withdrawal/return/adjust are negative.
     $netSavingsMonth=(float)$scalar("SELECT COALESCE(SUM(CASE WHEN sc.amount<0 OR LOWER(sc.type) IN ('withdrawal','return','adjust') THEN -ABS(sc.amount) ELSE sc.amount END),0) FROM saving_collections sc JOIN clients c ON c.id=sc.client_id WHERE sc.officer=? AND DATE_FORMAT(sc.date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m') AND {$scope}",array_merge([$user['username']],$scopeParams));
-
-    // Build union performance using the same active client-by-client calculation as PHP.
     $unionStats=[];
-    $sqlUnion="SELECT c.id,c.`union`,
-        (SELECT balance FROM saving_balances WHERE client_id=c.id LIMIT 1) AS total_savings,
-        COALESCE(l.active_balance,0) AS loan_balance
-        FROM clients c
-        LEFT JOIN (SELECT client_id,SUM(remaining_balance) AS active_balance FROM disbursements WHERE status!='completed' AND remaining_balance>0 GROUP BY client_id) l ON c.id=l.client_id
-        WHERE {$scope} AND c.status='active'";
-    $stmt=$pdo->prepare($sqlUnion); $stmt->execute($scopeParams);
-    $grandSavings=0.0; $grandLoans=0.0;
+    $sqlUnion="SELECT c.id,c.`union`, (SELECT balance FROM saving_balances WHERE client_id=c.id LIMIT 1) AS total_savings, COALESCE(l.active_balance,0) AS loan_balance FROM clients c LEFT JOIN (SELECT client_id,SUM(remaining_balance) AS active_balance FROM disbursements WHERE status!='completed' AND remaining_balance>0 GROUP BY client_id) l ON c.id=l.client_id WHERE {$scope} AND c.status='active'";
+    $stmt=$pdo->prepare($sqlUnion); $stmt->execute($scopeParams); $grandSavings=0.0; $grandLoans=0.0;
     while($row=$stmt->fetch(PDO::FETCH_ASSOC)){
-        $savings=(float)($row['total_savings']??0); $loans=(float)($row['loan_balance']??0);
-        $grandSavings += $savings; $grandLoans += $loans;
-        $name=trim((string)($row['union']??''));
-        $name=$name===''?'Unassigned':ucwords(strtolower($name));
+        $savings=(float)($row['total_savings']??0); $loans=(float)($row['loan_balance']??0); $grandSavings += $savings; $grandLoans += $loans;
+        $name=trim((string)($row['union']??'')); $name=$name===''?'Unassigned':ucwords(strtolower($name));
         if(!isset($unionStats[$name])) $unionStats[$name]=['name'=>$name,'clients'=>0,'savings'=>0,'loans'=>0];
-        $unionStats[$name]['clients']++;
-        $unionStats[$name]['savings'] += $savings;
-        $unionStats[$name]['loans'] += $loans;
+        $unionStats[$name]['clients']++; $unionStats[$name]['savings'] += $savings; $unionStats[$name]['loans'] += $loans;
     }
-    ksort($unionStats,SORT_NATURAL|SORT_FLAG_CASE);
-    $unions=array_values($unionStats);
-
-    respond(['success'=>true,'data'=>[
-        'monthly_net_savings'=>$netSavingsMonth,
-        'monthly_disbursed'=>$monthlyDisbursed,
-        'active_loans'=>$activeLoans,
-        'total_savings'=>$grandSavings,
-        'total_loans_outstanding'=>$grandLoans,
-        'portfolio_net'=>$grandSavings-$grandLoans,
-        'clients'=>$clients,
-        'savings_today'=>$savingsToday,
-        'collected_today'=>$collectedToday,
-        'collected_month'=>$collectedMonth,
-        'net_savings_month'=>$netSavingsMonth,
-        'outstanding'=>$grandLoans,
-        'unions'=>$unions
-    ]]);
+    ksort($unionStats,SORT_NATURAL|SORT_FLAG_CASE); $unions=array_values($unionStats);
+    respond(['success'=>true,'data'=>['monthly_net_savings'=>$netSavingsMonth,'monthly_disbursed'=>$monthlyDisbursed,'active_loans'=>$activeLoans,'total_savings'=>$grandSavings,'total_loans_outstanding'=>$grandLoans,'portfolio_net'=>$grandSavings-$grandLoans,'clients'=>$clients,'savings_today'=>$savingsToday,'collected_today'=>$collectedToday,'collected_month'=>$collectedMonth,'net_savings_month'=>$netSavingsMonth,'outstanding'=>$grandLoans,'unions'=>$unions]]);
 }
 
-/* Activity feed mirrors the four UNION ALL sources in co/dashboard.php. */
+/* Activity feed deliberately mirrors the PHP CO dashboard and does not depend on optional transaction_id columns. */
 if ($method === 'GET' && $route === 'activities') {
-    $user=mobileUser(); $limit=min(100,max(1,(int)($_GET['limit']??7)));
-    $sql="SELECT type,client_name,amount,date,transaction_id FROM (
-        SELECT 'Saving' type,c.name client_name,s.amount,s.date,s.transaction_id
+    $user=mobileUser();
+    $limit=min(100,max(1,(int)($_GET['limit']??7)));
+    $sql="SELECT type,client_name,amount,date FROM (
+        SELECT 'Saving' AS type,c.name AS client_name,s.amount,s.date
         FROM saving_collections s JOIN clients c ON s.client_id=c.id
         WHERE s.officer=? AND s.type='deposit'
         UNION ALL
-        SELECT 'Withdrawal' type,c.name client_name,s.amount,s.date,s.transaction_id
+        SELECT 'Withdrawal' AS type,c.name AS client_name,s.amount,s.date
         FROM saving_collections s JOIN clients c ON s.client_id=c.id
         WHERE s.officer=? AND s.type='withdrawal'
         UNION ALL
-        SELECT 'Payment' type,c.name client_name,p.amount_collected amount,p.date,p.transaction_id
+        SELECT 'Payment' AS type,c.name AS client_name,p.amount_collected AS amount,p.date
         FROM loan_collections p JOIN clients c ON p.client_id=c.id
         WHERE p.officer=?
         UNION ALL
-        SELECT 'Disbursement' type,c.name client_name,d.principal amount,d.created_at date,CAST(d.id AS CHAR) transaction_id
+        SELECT 'Disbursement' AS type,c.name AS client_name,d.principal AS amount,d.created_at AS date
         FROM disbursements d JOIN clients c ON d.client_id=c.id
         WHERE d.officer=?
     ) activities ORDER BY date DESC LIMIT $limit";
-    $s=db()->prepare($sql);$s->execute([$user['username'],$user['username'],$user['username'],$user['username']]);respond(['success'=>true,'data'=>$s->fetchAll()]);
+    try {
+        $s=db()->prepare($sql);
+        $s->execute([$user['username'],$user['username'],$user['username'],$user['username']]);
+        respond(['success'=>true,'data'=>$s->fetchAll()]);
+    } catch (Throwable $e) {
+        respond(['success'=>false,'error'=>'Unable to load activity history'],500);
+    }
 }
 
 if ($method === 'POST' && $route === 'savings/collect') {
