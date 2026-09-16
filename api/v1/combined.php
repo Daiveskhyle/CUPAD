@@ -30,8 +30,8 @@ if ($route === 'combined/union-data' && $method === 'GET') {
     $ids=array_column($clients,'id');
     $ph=implode(',',array_fill(0,count($ids),'?'));
     $loanTx=[]; $savTx=[]; $balances=[]; $loans=[];
-    $s=$pdo->prepare("SELECT client_id,amount_collected,disbursement_id FROM loan_collections WHERE DATE(date)=? AND client_id IN ($ph)");
-    $s->execute(array_merge([$queryDate],$ids)); while($r=$s->fetch(PDO::FETCH_ASSOC)) $loanTx[$r['client_id']]=$r;
+    $s=$pdo->prepare("SELECT client_id,amount_collected,disbursement_id FROM loan_collections WHERE DATE(date)=? AND client_id IN ($ph) ORDER BY id ASC");
+    $s->execute(array_merge([$queryDate],$ids)); while($r=$s->fetch(PDO::FETCH_ASSOC)) { if(!isset($loanTx[$r['client_id']])) $loanTx[$r['client_id']]=$r; }
     $s=$pdo->prepare("SELECT client_id,amount,type FROM saving_collections WHERE DATE(date)=? AND client_id IN ($ph)");
     $s->execute(array_merge([$queryDate],$ids)); while($r=$s->fetch(PDO::FETCH_ASSOC)){ $id=$r['client_id']; if(!isset($savTx[$id]))$savTx[$id]=['sav_amt'=>0,'wth_type'=>'','wth_amt'=>0]; if(strtolower((string)$r['type'])==='deposit')$savTx[$id]['sav_amt']+=(float)$r['amount']; else {$savTx[$id]['wth_type']=$r['type'];$savTx[$id]['wth_amt']=abs((float)$r['amount']);} }
     $s=$pdo->prepare("SELECT client_id,balance FROM saving_balances WHERE client_id IN ($ph)"); $s->execute($ids); while($r=$s->fetch(PDO::FETCH_ASSOC))$balances[$r['client_id']]=(float)$r['balance'];
@@ -70,6 +70,15 @@ if ($route === 'combined/save' && $method === 'POST') {
         $q=$pdo->prepare('SELECT * FROM disbursements WHERE client_id=? AND remaining_balance>0.01 AND status!=\'completed\' ORDER BY date DESC LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$loan=$q->fetch(PDO::FETCH_ASSOC);
         if($installments>0){
             if(!$loan)throw new RuntimeException('No active loan found.');
+
+            /* PHP Combined Collection rule: a client can have only one loan collection for the selected day. */
+            $daily=$pdo->prepare('SELECT transaction_id,amount_collected FROM loan_collections WHERE client_id=? AND DATE(date)=? ORDER BY id ASC LIMIT 1 FOR UPDATE');
+            $daily->execute([$clientId,$paymentDate]);
+            $existingDailyLoan=$daily->fetch(PDO::FETCH_ASSOC);
+            if($existingDailyLoan){
+                throw new RuntimeException('Loan collection has already been made for this client today. The saved amount has been loaded.');
+            }
+
             $total=(float)$loan['total_payable'];$remaining=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments']?:23);$inst=$num>0?$total/$num:0;$amount=min($remaining,$inst*$installments);
             if($amount<=0)throw new RuntimeException('Loan has no remaining balance.');
             $new=max(0,$remaining-$amount);$tx=mobileTxn('LP');
