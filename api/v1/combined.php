@@ -70,15 +70,10 @@ if ($route === 'combined/save' && $method === 'POST') {
         $q=$pdo->prepare('SELECT * FROM disbursements WHERE client_id=? AND remaining_balance>0.01 AND status!=\'completed\' ORDER BY date DESC LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$loan=$q->fetch(PDO::FETCH_ASSOC);
         if($installments>0){
             if(!$loan)throw new RuntimeException('No active loan found.');
-
-            /* PHP Combined Collection rule: a client can have only one loan collection for the selected day. */
             $daily=$pdo->prepare('SELECT transaction_id,amount_collected FROM loan_collections WHERE client_id=? AND DATE(date)=? ORDER BY id ASC LIMIT 1 FOR UPDATE');
             $daily->execute([$clientId,$paymentDate]);
             $existingDailyLoan=$daily->fetch(PDO::FETCH_ASSOC);
-            if($existingDailyLoan){
-                throw new RuntimeException('Loan collection has already been made for this client today. The saved amount has been loaded.');
-            }
-
+            if($existingDailyLoan){throw new RuntimeException('Loan collection has already been made for this client today. The saved amount has been loaded.');}
             $total=(float)$loan['total_payable'];$remaining=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments']?:23);$inst=$num>0?$total/$num:0;$amount=min($remaining,$inst*$installments);
             if($amount<=0)throw new RuntimeException('Loan has no remaining balance.');
             $new=max(0,$remaining-$amount);$tx=mobileTxn('LP');
@@ -91,7 +86,26 @@ if ($route === 'combined/save' && $method === 'POST') {
             if($balRow)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
         }
         if($wtype!==''&&$wamt>0){
-            $q=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');$q->execute([$clientId]);$balRow=$q->fetch(PDO::FETCH_ASSOC);$old=(float)($balRow['balance']??0);$new=max(0,$old-$wamt);if($wamt>$old)throw new RuntimeException('Insufficient savings balance.');$tx=mobileTxn('ADJ');$sid=$balRow['id']??null;$pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$wamt,$wtype,$dateTime,$user['username'],$new,$notes]);$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);
+            $q=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');$q->execute([$clientId]);$balRow=$q->fetch(PDO::FETCH_ASSOC);$old=(float)($balRow['balance']??0);
+            if($wtype==='return'){
+                if(!$loan){
+                    $q=$pdo->prepare('SELECT * FROM disbursements WHERE client_id=? AND remaining_balance>0.01 AND status!=\'completed\' ORDER BY date DESC LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$loan=$q->fetch(PDO::FETCH_ASSOC);
+                }
+                if(!$loan)throw new RuntimeException('No active loan found for Return.');
+                $loanRemaining=(float)$loan['remaining_balance'];
+                $actualDeduct=min($old,$loanRemaining);
+                if($actualDeduct<=0)throw new RuntimeException('No savings are available to settle the loan.');
+                $new=max(0,$old-$actualDeduct);
+                $newLoan=max(0,$loanRemaining-$actualDeduct);
+                $loanStatus=$newLoan<=0.01?'completed':'active';
+                $pdo->prepare("UPDATE disbursements SET remaining_balance=?,status=?,payoff_date=? WHERE id=?")->execute([$newLoan,$loanStatus,$newLoan<=0.01?$paymentDate:null,$loan['id']]);
+                $tx=mobileTxn('ADJ');$sid=$balRow['id']??null;
+                $pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$actualDeduct,'return',$dateTime,$user['username'],$new,$notes?:'Used to settle loan']);
+            } else {
+                if($wamt>$old)throw new RuntimeException('Insufficient savings balance.');
+                $new=max(0,$old-$wamt);$tx=mobileTxn('ADJ');$sid=$balRow['id']??null;$pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$wamt,$wtype,$dateTime,$user['username'],$new,$notes]);
+            }
+            $pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);
         }
         $pdo->commit();respond(['success'=>true,'message'=>'Combined collection saved successfully.']);
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();respond(['success'=>false,'error'=>$e->getMessage()?:'Unable to save combined collection'],422);}
