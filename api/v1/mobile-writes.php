@@ -247,9 +247,35 @@ if ($method === 'GET' && $route === 'activities') {
 }
 
 if ($method === 'POST' && $route === 'savings/collect') {
-    $user=mobileUser();$b=jsonBody();$clientId=trim((string)($b['client_id']??''));$amount=(float)($b['amount']??0);$notes=trim((string)($b['notes']??''));
-    if($clientId===''||$amount<=0)respond(['success'=>false,'error'=>'client_id and positive amount required'],422);mobileClientAllowed($user,$clientId);$txn=mobileTxn('SV');$pdo=db();
-    try{$pdo->beginTransaction();$s=$pdo->prepare("INSERT INTO saving_collections (client_id,amount,type,date,officer,notes,transaction_id) VALUES (?,?,'deposit',NOW(),?,?,?)");$s->execute([$clientId,$amount,$user['username'],$notes,$txn]);try{$pdo->prepare("UPDATE savings SET balance=balance+? WHERE client_id=? AND status<>'closed'")->execute([$amount,$clientId]);}catch(Throwable $e){}$pdo->commit();respond(['success'=>true,'transaction_id'=>$txn,'message'=>'Savings collected']);}catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();respond(['success'=>false,'error'=>'Unable to record savings collection'],500);}
+    $user=mobileUser();$b=jsonBody();$clientId=trim((string)($b['client_id']??''));$amount=(float)($b['amount']??0);
+    if($clientId===''||$amount<=0)respond(['success'=>false,'error'=>'client_id and positive amount required'],422);
+    mobileClientAllowed($user,$clientId);
+    $pdo=db();
+    $paymentDate=trim((string)($b['date']??date('Y-m-d')));
+    $ts=strtotime($paymentDate);$paymentDate=$ts?date('Y-m-d',$ts):date('Y-m-d');
+    try{
+        $pdo->beginTransaction();
+        $dup=$pdo->prepare("SELECT transaction_id FROM saving_collections WHERE client_id=? AND type='deposit' AND DATE(date)=? LIMIT 1 FOR UPDATE");
+        $dup->execute([$clientId,$paymentDate]);
+        if($dup->fetchColumn())throw new RuntimeException('A savings transaction already exists for this client on the selected date.');
+        $bal=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');
+        $bal->execute([$clientId]);
+        $balRow=$bal->fetch(PDO::FETCH_ASSOC);
+        $old=(float)($balRow['balance']??0);
+        $new=$old+$amount;
+        $txn=mobileTxn('SV');
+        $sid=$balRow['id']??null;
+        $ins=$pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())");
+        $ins->execute([$txn,$clientId,$sid,$amount,'deposit',$paymentDate.' '.date('H:i:s'),$user['username'],$new,'']);
+        if($balRow)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);
+        else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
+        $pdo->commit();
+        respond(['success'=>true,'transaction_id'=>$txn,'balance'=>$new,'message'=>'Savings collected']);
+    }catch(Throwable $e){
+        if($pdo->inTransaction())$pdo->rollBack();
+        $message=$e instanceof RuntimeException?$e->getMessage():'Unable to record savings collection';
+        respond(['success'=>false,'error'=>$message],$e instanceof RuntimeException?409:500);
+    }
 }
 
 if ($method === 'POST' && $route === 'savings/withdraw') {
