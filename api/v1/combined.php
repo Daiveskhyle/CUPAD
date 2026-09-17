@@ -44,7 +44,12 @@ if ($route === 'combined/union-data' && $method === 'GET') {
     $s->execute(array_merge([$queryDate],$ids)); while($r=$s->fetch(PDO::FETCH_ASSOC)) { if(!isset($loanTx[$r['client_id']])) $loanTx[$r['client_id']]=$r; }
     $s=$pdo->prepare("SELECT client_id,amount,type FROM saving_collections WHERE DATE(date)=? AND client_id IN ($ph)");
     $s->execute(array_merge([$queryDate],$ids)); while($r=$s->fetch(PDO::FETCH_ASSOC)){ $id=$r['client_id']; if(!isset($savTx[$id]))$savTx[$id]=['sav_amt'=>0,'wth_type'=>'','wth_amt'=>0]; if(strtolower((string)$r['type'])==='deposit')$savTx[$id]['sav_amt']+=(float)$r['amount']; else {$savTx[$id]['wth_type']=$r['type'];$savTx[$id]['wth_amt']=abs((float)$r['amount']);} }
-    $s=$pdo->prepare("SELECT client_id,balance FROM saving_balances WHERE client_id IN ($ph)"); $s->execute($ids); while($r=$s->fetch(PDO::FETCH_ASSOC))$balances[$r['client_id']]=(float)$r['balance'];
+
+    // savings.balance is the permanent cumulative balance. saving_balances is kept as a compatibility cache.
+    $s=$pdo->prepare("SELECT client_id,balance FROM savings WHERE status='active' AND client_id IN ($ph) ORDER BY created_at ASC");
+    $s->execute($ids);
+    while($r=$s->fetch(PDO::FETCH_ASSOC)) if(!isset($balances[$r['client_id']])) $balances[$r['client_id']]=(float)$r['balance'];
+
     $s=$pdo->prepare("SELECT * FROM disbursements WHERE client_id IN ($ph) AND (status!='completed' OR payoff_date>=?) ORDER BY date DESC"); $s->execute(array_merge($ids,[$queryDate])); while($r=$s->fetch(PDO::FETCH_ASSOC)) if(!isset($loans[$r['client_id']]))$loans[$r['client_id']]=$r;
     foreach($loanTx as $cid=>$tx){ if(!isset($loans[$cid]) && !empty($tx['disbursement_id'])) { $q=$pdo->prepare('SELECT * FROM disbursements WHERE id=? LIMIT 1');$q->execute([$tx['disbursement_id']]);if($r=$q->fetch(PDO::FETCH_ASSOC))$loans[$cid]=$r; } }
 
@@ -99,11 +104,27 @@ if ($route === 'combined/save' && $method === 'POST') {
             $ins=$pdo->prepare("INSERT INTO loan_collections (transaction_id,client_id,disbursement_id,amount_collected,date,officer,type,remaining_balance,notes) VALUES (?,?,?,?,?,?, 'repayment',?,?)");$ins->execute([$tx,$clientId,$loan['id'],$amount,$dateTime,$user['username'],$new,$notes]);
             $pdo->prepare("UPDATE disbursements SET remaining_balance=?,status=? WHERE id=?")->execute([$new,$new<=0.01?'completed':'active',$loan['id']]);
         }
+
         if($saving>0){
-            $q=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');$q->execute([$clientId]);$balRow=$q->fetch(PDO::FETCH_ASSOC);$old=(float)($balRow['balance']??0);$new=$old+$saving;$tx=mobileTxn('SV');$sid=$balRow['id']??null;
+            // Source of truth: savings.balance. saving_balances is only synchronized for compatibility.
+            $q=$pdo->prepare("SELECT id,balance FROM savings WHERE client_id=? AND status='active' ORDER BY created_at ASC LIMIT 1 FOR UPDATE");
+            $q->execute([$clientId]);
+            $savingRow=$q->fetch(PDO::FETCH_ASSOC);
+            $old=(float)($savingRow['balance']??0);
+            $new=$old+$saving;
+            $sid=$savingRow['id']??null;
+            if($sid){
+                $pdo->prepare('UPDATE savings SET balance=?,updated_at=NOW() WHERE id=?')->execute([$new,$sid]);
+            }else{
+                $sid='SVG-'.strtoupper(bin2hex(random_bytes(16)));
+                $pdo->prepare("INSERT INTO savings (id,client_id,officer,balance,status,created_at) VALUES (?,?,?,?,'active',NOW())")->execute([$sid,$clientId,$user['username'],$new]);
+            }
+            $tx=mobileTxn('SV');
             $pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,$saving,'deposit',$dateTime,$user['username'],$new,$notes]);
-            if($balRow)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
+            $q=$pdo->prepare('SELECT id FROM saving_balances WHERE client_id=? ORDER BY id LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$balId=$q->fetchColumn();
+            if($balId)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balId]);else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
         }
+
         if($wtype!==''&&$wamt>0){
             $daily=$pdo->prepare('SELECT amount_collected,disbursement_id FROM loan_collections WHERE client_id=? AND DATE(date)=? ORDER BY id ASC LIMIT 1 FOR UPDATE');
             $daily->execute([$clientId,$paymentDate]);
@@ -118,7 +139,14 @@ if ($route === 'combined/save' && $method === 'POST') {
                     if($dailyInst>0 && (float)$dailyLoan['amount_collected'] >= ($dailyInst*2)-0.01) throw new RuntimeException('Withdrawal or Return is not allowed after a 2-installment repayment today.');
                 }
             }
-            $q=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');$q->execute([$clientId]);$balRow=$q->fetch(PDO::FETCH_ASSOC);$old=(float)($balRow['balance']??0);
+
+            // Read and lock the cumulative savings account, not saving_balances.
+            $q=$pdo->prepare("SELECT id,balance FROM savings WHERE client_id=? AND status='active' ORDER BY created_at ASC LIMIT 1 FOR UPDATE");
+            $q->execute([$clientId]);
+            $savingRow=$q->fetch(PDO::FETCH_ASSOC);
+            $sid=$savingRow['id']??null;
+            $old=(float)($savingRow['balance']??0);
+
             if($wtype==='return'){
                 if(!$loan){
                     $q=$pdo->prepare('SELECT * FROM disbursements WHERE client_id=? AND remaining_balance>0.01 AND status!=\'completed\' ORDER BY date DESC LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$loan=$q->fetch(PDO::FETCH_ASSOC);
@@ -131,13 +159,19 @@ if ($route === 'combined/save' && $method === 'POST') {
                 $newLoan=max(0,$loanRemaining-$actualDeduct);
                 $loanStatus=$newLoan<=0.01?'completed':'active';
                 $pdo->prepare("UPDATE disbursements SET remaining_balance=?,status=?,payoff_date=? WHERE id=?")->execute([$newLoan,$loanStatus,$newLoan<=0.01?$paymentDate:null,$loan['id']]);
-                $tx=mobileTxn('ADJ');$sid=$balRow['id']??null;
+                if(!$sid)throw new RuntimeException('No active savings account found.');
+                $tx=mobileTxn('ADJ');
                 $pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$actualDeduct,'return',$dateTime,$user['username'],$new,$notes?:'Used to settle loan']);
             } else {
+                if(!$sid)throw new RuntimeException('No active savings account found.');
                 if($wamt>$old)throw new RuntimeException('Insufficient savings balance.');
-                $new=max(0,$old-$wamt);$tx=mobileTxn('ADJ');$sid=$balRow['id']??null;$pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$wamt,$wtype,$dateTime,$user['username'],$new,$notes]);
+                $new=max(0,$old-$wamt);$tx=mobileTxn('ADJ');
+                $pdo->prepare("INSERT INTO saving_collections (transaction_id,client_id,savings_id,amount,type,date,officer,balance_after,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,NOW())")->execute([$tx,$clientId,$sid,-$wamt,$wtype,$dateTime,$user['username'],$new,$notes]);
             }
-            $pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);
+
+            $pdo->prepare('UPDATE savings SET balance=?,updated_at=NOW() WHERE id=?')->execute([$new,$sid]);
+            $q=$pdo->prepare('SELECT id FROM saving_balances WHERE client_id=? ORDER BY id LIMIT 1 FOR UPDATE');$q->execute([$clientId]);$balId=$q->fetchColumn();
+            if($balId)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balId]);else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
         }
         $pdo->commit();respond(['success'=>true,'message'=>'Combined collection saved successfully.']);
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();respond(['success'=>false,'error'=>$e->getMessage()?:'Unable to save combined collection'],422);}
