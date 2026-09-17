@@ -11,6 +11,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Restore file
         run: |
           git checkout c3595b98d7ccaf93b3dab4f30a6d0c6b066360ce -- api/v1/mobile-writes.php
