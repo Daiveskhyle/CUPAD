@@ -18,6 +18,7 @@ if ($route === 'combined/union-data' && $method === 'GET') {
         try { $s=$pdo->query("SELECT * FROM {$table} LIMIT 1"); if($s && ($r=$s->fetch(PDO::FETCH_ASSOC))) $target=array_merge($target,$r); } catch(Throwable $e) {}
     }
     try { $s=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1'); if($s && ($r=$s->fetch(PDO::FETCH_ASSOC))) $dateReadonly=(bool)$r['date_readonly']; } catch(Throwable $e) {}
+    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));
 
     [$scope,$scopeParams] = mobileScopeClause($user,'c');
     $sql = "SELECT c.id,c.name,c.`union` FROM clients c WHERE {$scope} AND c.status='active'";
@@ -55,7 +56,9 @@ if ($route === 'combined/save' && $method === 'POST') {
     $col=['max_installments_per_payment'=>3,'min_installments_per_payment'=>1,'allow_partial_payments'=>0,'allow_overpayment'=>0];$sav=['min_savings_amount'=>100,'max_savings_amount'=>500000,'allow_weekend_collection'=>0];$wd=['allow_weekend_withdrawals'=>0,'blocked_withdrawal_types'=>'[]','buffer_withdrawal'=>10,'buffer_return'=>10];$dateReadonly=false;
     foreach ([['loan_collection_settings',&$col],['savings_settings',&$sav],['withdrawal_settings',&$wd]] as [$table,&$target]){try{$q=$pdo->query("SELECT * FROM {$table} LIMIT 1");if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$target=array_merge($target,$r);}catch(Throwable $e){}}
     try{$q=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1');if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$dateReadonly=(bool)$r['date_readonly'];}catch(Throwable $e){}
+    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));
     if($dateReadonly && $paymentDate!==date('Y-m-d'))respond(['success'=>false,'error'=>'Date modification is not allowed. Please use current date.'],422);
+    if($installments>=2 && $wtype!=='')respond(['success'=>false,'error'=>'Withdrawal or Return is not allowed when repaying 2 installments.'],422);
     if($installments>0 && $wtype!=='')respond(['success'=>false,'error'=>'Repayment and Deduct/Return cannot be processed together.'],422);
     if($saving<0||$wamt<0)respond(['success'=>false,'error'=>'Negative amounts are not allowed.'],422);
     $dow=(int)date('N',strtotime($paymentDate));if($dow>=6){if(($saving>0||$installments>0)&&empty($sav['allow_weekend_collection']))respond(['success'=>false,'error'=>'Weekend collections are disabled.'],422);if($wamt>0&&!empty($wd['allow_weekend_withdrawals'])){}elseif($wamt>0)respond(['success'=>false,'error'=>'Weekend withdrawals are disabled.'],422);}
@@ -86,6 +89,19 @@ if ($route === 'combined/save' && $method === 'POST') {
             if($balRow)$pdo->prepare('UPDATE saving_balances SET balance=?,last_updated=NOW() WHERE id=?')->execute([$new,$balRow['id']]);else $pdo->prepare('INSERT INTO saving_balances(client_id,balance,last_updated) VALUES(?,?,NOW())')->execute([$clientId,$new]);
         }
         if($wtype!==''&&$wamt>0){
+            $daily=$pdo->prepare('SELECT amount_collected,disbursement_id FROM loan_collections WHERE client_id=? AND DATE(date)=? ORDER BY id ASC LIMIT 1 FOR UPDATE');
+            $daily->execute([$clientId,$paymentDate]);
+            $dailyLoan=$daily->fetch(PDO::FETCH_ASSOC);
+            if($dailyLoan){
+                $dailyLoanRow=$loan;
+                if(!$dailyLoanRow && !empty($dailyLoan['disbursement_id'])){ $dq=$pdo->prepare('SELECT * FROM disbursements WHERE id=? LIMIT 1 FOR UPDATE');$dq->execute([$dailyLoan['disbursement_id']]);$dailyLoanRow=$dq->fetch(PDO::FETCH_ASSOC); }
+                if($dailyLoanRow){
+                    $dailyTotal=(float)$dailyLoanRow['total_payable'];
+                    $dailyNum=(int)($dailyLoanRow['num_installments']?:23);
+                    $dailyInst=$dailyNum>0?$dailyTotal/$dailyNum:0;
+                    if($dailyInst>0 && (float)$dailyLoan['amount_collected'] >= ($dailyInst*2)-0.01) throw new RuntimeException('Withdrawal or Return is not allowed after a 2-installment repayment today.');
+                }
+            }
             $q=$pdo->prepare('SELECT id,balance FROM saving_balances WHERE client_id=? FOR UPDATE');$q->execute([$clientId]);$balRow=$q->fetch(PDO::FETCH_ASSOC);$old=(float)($balRow['balance']??0);
             if($wtype==='return'){
                 if(!$loan){
