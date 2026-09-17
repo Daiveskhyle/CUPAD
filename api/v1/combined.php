@@ -20,6 +20,15 @@ if ($route === 'combined/union-data' && $method === 'GET') {
     try { $s=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1'); if($s && ($r=$s->fetch(PDO::FETCH_ASSOC))) $dateReadonly=(bool)$r['date_readonly']; } catch(Throwable $e) {}
     $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));
 
+    // Match co/combined_collection.php: weekly COs default to 24 installments, others to 23.
+    $coIsWeekly=false;
+    try {
+        $uq=$pdo->prepare('SELECT is_weekly FROM users WHERE username=? LIMIT 1');
+        $uq->execute([(string)($user['username']??'')]);
+        $coIsWeekly=(bool)$uq->fetchColumn();
+    } catch(Throwable $e) {}
+    $defaultInstallments=$coIsWeekly?24:23;
+
     [$scope,$scopeParams] = mobileScopeClause($user,'c');
     $sql = "SELECT c.id,c.name,c.`union` FROM clients c WHERE {$scope} AND c.status='active'";
     $params = $scopeParams;
@@ -42,7 +51,7 @@ if ($route === 'combined/union-data' && $method === 'GET') {
     $data=[];
     foreach($clients as $c){
         $cid=$c['id']; $loan=$loans[$cid]??null;
-        if($loan){$total=(float)$loan['total_payable'];$rem=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments'] ?: 23);$inst=$num>0?$total/$num:0;$loan['installments_paid']=$inst>0?(int)floor(($total-$rem)/$inst):0;$loan['inst_amt']=$inst;}
+        if($loan){$total=(float)$loan['total_payable'];$rem=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments'] ?: $defaultInstallments);$inst=$num>0?$total/$num:0;$loan['installments_paid']=$inst>0?(int)floor(($total-$rem)/$inst):0;$loan['inst_amt']=$inst;}
         $data[]=['id'=>$cid,'name'=>$c['name'],'loan'=>$loan,'savings_balance'=>$balances[$cid]??0,'existing'=>['loan_amt'=>(float)($loanTx[$cid]['amount_collected']??0),'sav_amt'=>(float)($savTx[$cid]['sav_amt']??0),'wth_type'=>(string)($savTx[$cid]['wth_type']??''),'wth_amt'=>(float)($savTx[$cid]['wth_amt']??0)]];
     }
     respond(['success'=>true,'data'=>$data,'settings'=>['collection'=>$col,'savings'=>$sav,'withdrawal'=>$wd,'date_readonly'=>$dateReadonly]]);
@@ -57,6 +66,13 @@ if ($route === 'combined/save' && $method === 'POST') {
     foreach ([['loan_collection_settings',&$col],['savings_settings',&$sav],['withdrawal_settings',&$wd]] as [$table,&$target]){try{$q=$pdo->query("SELECT * FROM {$table} LIMIT 1");if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$target=array_merge($target,$r);}catch(Throwable $e){}}
     try{$q=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1');if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$dateReadonly=(bool)$r['date_readonly'];}catch(Throwable $e){}
     $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));
+    $coIsWeekly=false;
+    try {
+        $uq=$pdo->prepare('SELECT is_weekly FROM users WHERE username=? LIMIT 1');
+        $uq->execute([(string)($user['username']??'')]);
+        $coIsWeekly=(bool)$uq->fetchColumn();
+    } catch(Throwable $e) {}
+    $defaultInstallments=$coIsWeekly?24:23;
     if($dateReadonly && $paymentDate!==date('Y-m-d'))respond(['success'=>false,'error'=>'Date modification is not allowed. Please use current date.'],422);
     if($installments>=2 && $wtype!=='')respond(['success'=>false,'error'=>'Withdrawal or Return is not allowed when repaying 2 installments.'],422);
     if($installments>0 && $wtype!=='')respond(['success'=>false,'error'=>'Repayment and Deduct/Return cannot be processed together.'],422);
@@ -77,7 +93,7 @@ if ($route === 'combined/save' && $method === 'POST') {
             $daily->execute([$clientId,$paymentDate]);
             $existingDailyLoan=$daily->fetch(PDO::FETCH_ASSOC);
             if($existingDailyLoan){throw new RuntimeException('Loan collection has already been made for this client today. The saved amount has been loaded.');}
-            $total=(float)$loan['total_payable'];$remaining=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments']?:23);$inst=$num>0?$total/$num:0;$amount=min($remaining,$inst*$installments);
+            $total=(float)$loan['total_payable'];$remaining=(float)$loan['remaining_balance'];$num=(int)($loan['num_installments']?:$defaultInstallments);$inst=$num>0?$total/$num:0;$amount=min($remaining,$inst*$installments);
             if($amount<=0)throw new RuntimeException('Loan has no remaining balance.');
             $new=max(0,$remaining-$amount);$tx=mobileTxn('LP');
             $ins=$pdo->prepare("INSERT INTO loan_collections (transaction_id,client_id,disbursement_id,amount_collected,date,officer,type,remaining_balance,notes) VALUES (?,?,?,?,?,?, 'repayment',?,?)");$ins->execute([$tx,$clientId,$loan['id'],$amount,$dateTime,$user['username'],$new,$notes]);
@@ -97,7 +113,7 @@ if ($route === 'combined/save' && $method === 'POST') {
                 if(!$dailyLoanRow && !empty($dailyLoan['disbursement_id'])){ $dq=$pdo->prepare('SELECT * FROM disbursements WHERE id=? LIMIT 1 FOR UPDATE');$dq->execute([$dailyLoan['disbursement_id']]);$dailyLoanRow=$dq->fetch(PDO::FETCH_ASSOC); }
                 if($dailyLoanRow){
                     $dailyTotal=(float)$dailyLoanRow['total_payable'];
-                    $dailyNum=(int)($dailyLoanRow['num_installments']?:23);
+                    $dailyNum=(int)($dailyLoanRow['num_installments']?:$defaultInstallments);
                     $dailyInst=$dailyNum>0?$dailyTotal/$dailyNum:0;
                     if($dailyInst>0 && (float)$dailyLoan['amount_collected'] >= ($dailyInst*2)-0.01) throw new RuntimeException('Withdrawal or Return is not allowed after a 2-installment repayment today.');
                 }
