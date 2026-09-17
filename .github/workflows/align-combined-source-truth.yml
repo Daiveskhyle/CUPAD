@@ -1,0 +1,64 @@
+name: Align Combined API With PHP Source Of Truth
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/align-combined-source-truth.yml'
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Align combined API loan calculations
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('api/v1/combined.php')
+          s = p.read_text()
+
+          anchor = "    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n\n    [$scope,$scopeParams] = mobileScopeClause($user,'c');"
+          replacement = "    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n\n    // Match co/combined_collection.php: weekly COs default to 24 installments, others to 23.\n    $coIsWeekly=false;\n    try {\n        $uq=$pdo->prepare('SELECT is_weekly FROM users WHERE username=? LIMIT 1');\n        $uq->execute([(string)($user['username']??'')]);\n        $coIsWeekly=(bool)$uq->fetchColumn();\n    } catch(Throwable $e) {}\n    $defaultInstallments=$coIsWeekly?24:23;\n\n    [$scope,$scopeParams] = mobileScopeClause($user,'c');"
+          if anchor not in s:
+              raise SystemExit('combined GET settings anchor not found')
+          s = s.replace(anchor, replacement, 1)
+
+          old = "$num=(int)($loan['num_installments'] ?: 23);$inst=$num>0?$total/$num:0;"
+          new = "$num=(int)($loan['num_installments'] ?: $defaultInstallments);$inst=$num>0?$total/$num:0;"
+          if old not in s:
+              raise SystemExit('combined GET installment expression not found')
+          s = s.replace(old, new, 1)
+
+          # The POST path must use the same CO weekly fallback as the PHP page.
+          post_anchor = "    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n    if($dateReadonly"
+          post_replacement = "    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n    $coIsWeekly=false;\n    try {\n        $uq=$pdo->prepare('SELECT is_weekly FROM users WHERE username=? LIMIT 1');\n        $uq->execute([(string)($user['username']??'')]);\n        $coIsWeekly=(bool)$uq->fetchColumn();\n    } catch(Throwable $e) {}\n    $defaultInstallments=$coIsWeekly?24:23;\n    if($dateReadonly"
+          if post_anchor not in s:
+              raise SystemExit('combined POST settings anchor not found')
+          s = s.replace(post_anchor, post_replacement, 1)
+
+          old_post = "$num=(int)($loan['num_installments']?:23);$inst=$num>0?$total/$num:0;"
+          new_post = "$num=(int)($loan['num_installments']?:$defaultInstallments);$inst=$num>0?$total/$num:0;"
+          if old_post not in s:
+              raise SystemExit('combined POST installment expression not found')
+          s = s.replace(old_post, new_post, 1)
+
+          old_daily = "$dailyNum=(int)($dailyLoanRow['num_installments']?:23);"
+          new_daily = "$dailyNum=(int)($dailyLoanRow['num_installments']?:$defaultInstallments);"
+          if old_daily not in s:
+              raise SystemExit('combined adjustment installment expression not found')
+          s = s.replace(old_daily, new_daily, 1)
+
+          p.write_text(s)
+
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/v1/combined.php
+          git diff --cached --quiet || git commit -m "fix: align combined API with PHP installment rules"
+          git push
