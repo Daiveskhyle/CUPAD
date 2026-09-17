@@ -1,0 +1,34 @@
+name: Prevent Duplicate Savings
+
+on:
+  push:
+    paths:
+      - '.github/workflows/prevent-duplicate-savings.yml'
+  workflow_dispatch:
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch savings API
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('api/v1/mobile-writes.php')
+          s = p.read_text()
+          old = "$user=mobileUser();$b=jsonBody();$clientId=trim((string)($b['client_id']??''));$amount=(float)($b['amount']??0);$notes=trim((string)($b['notes']??''));\n    if($clientId===''||$amount<=0)respond(['success'=>false,'error'=>'client_id and positive amount required'],422);mobileClientAllowed($user,$clientId);$txn=mobileTxn('SV');$pdo=db();"
+          new = "$user=mobileUser();$b=jsonBody();$clientId=trim((string)($b['client_id']??''));$amount=(float)($b['amount']??0);$notes='';\n    if($clientId===''||$amount<=0)respond(['success'=>false,'error'=>'client_id and positive amount required'],422);mobileClientAllowed($user,$clientId);$pdo=db();\n    $check=$pdo->prepare(\"SELECT transaction_id FROM saving_collections WHERE client_id=? AND type='deposit' AND DATE(date)=? LIMIT 1\");\n    $check->execute([$clientId,trim((string)($b['date']??date('Y-m-d')))]);\n    if($check->fetchColumn()) respond(['success'=>false,'error'=>'A savings transaction already exists for this client on the selected date.'],409);\n    $txn=mobileTxn('SV');"
+          if old not in s:
+              raise SystemExit('Savings API anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/v1/mobile-writes.php
+          git diff --cached --quiet || git commit -m "fix: block duplicate daily savings collections"
+          git push
