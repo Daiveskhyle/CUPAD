@@ -29,10 +29,35 @@ if ($route === 'combined/union-data' && $method === 'GET') {
     } catch(Throwable $e) {}
     $defaultInstallments=$coIsWeekly?24:23;
 
-    [$scope,$scopeParams] = mobileScopeClause($user,'c');
-    $sql = "SELECT c.id,c.name,c.`union` FROM clients c WHERE {$scope} AND c.status='active'";
-    $params = $scopeParams;
-    if ($union !== '') { $sql .= ' AND c.`union`=?'; $params[]=$union; }
+    /*
+     * Match the dashboard/client list exactly for visibility: active clients in
+     * the current user's scope. Do not apply deleted_at here because the
+     * dashboard count is based on status='active'.
+     */
+    $role = strtolower((string)$user['role']);
+    $where = ["c.status='active'"];
+    $params = [];
+    if ($role === 'co') {
+        $where[] = 'c.officer_username=?';
+        $params[] = $user['username'];
+    } elseif ($role === 'bm' && $user['branch_id'] !== null && $user['branch_id'] !== '') {
+        $where[] = 'c.branch_id=?';
+        $params[] = $user['branch_id'];
+    } elseif ($role === 'am' && $user['area_id'] !== null && $user['area_id'] !== '') {
+        $where[] = 'c.branch_id IN (SELECT id FROM branches WHERE area_id=?)';
+        $params[] = $user['area_id'];
+    } elseif (in_array($role,['zm','dzm','tm'],true) && $user['zone_id'] !== null && $user['zone_id'] !== '') {
+        $where[] = 'c.branch_id IN (SELECT id FROM branches WHERE zone_id=? OR area_id IN (SELECT id FROM areas WHERE zone_id=?))';
+        $params[] = $user['zone_id'];
+        $params[] = $user['zone_id'];
+    }
+
+    $sql = 'SELECT c.id,c.name,c.`union` FROM clients c WHERE '.implode(' AND ',$where);
+    if ($union !== '') {
+        // Tolerate accidental spaces in the stored union name.
+        $sql .= ' AND TRIM(c.`union`) = TRIM(?)';
+        $params[] = $union;
+    }
     $sql .= ' ORDER BY c.name ASC';
     $s=$pdo->prepare($sql); $s->execute($params); $clients=$s->fetchAll(PDO::FETCH_ASSOC);
     if (!$clients) respond(['success'=>true,'data'=>[],'settings'=>['collection'=>$col,'savings'=>$sav,'withdrawal'=>$wd,'date_readonly'=>$dateReadonly]]);
