@@ -1,0 +1,45 @@
+name: Fix Combined Collection API Rules
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-combined-api-rules.yml'
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch combined API
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('api/v1/combined.php')
+          s = p.read_text(encoding='utf-8')
+
+          # Hard server-side cap: a single repayment request can never exceed 2 installments.
+          s = s.replace("    try { $s=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1'); if($s && ($r=$s->fetch(PDO::FETCH_ASSOC))) $dateReadonly=(bool)$r['date_readonly']; } catch(Throwable $e) {}\n\n    [$scope,$scopeParams]", "    try { $s=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1'); if($s && ($r=$s->fetch(PDO::FETCH_ASSOC))) $dateReadonly=(bool)$r['date_readonly']; } catch(Throwable $e) {}\n    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n\n    [$scope,$scopeParams]")
+
+          s = s.replace("    try{$q=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1');if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$dateReadonly=(bool)$r['date_readonly'];}catch(Throwable $e){}\n    if($dateReadonly", "    try{$q=$pdo->query('SELECT date_readonly FROM date_control_settings LIMIT 1');if($q&&($r=$q->fetch(PDO::FETCH_ASSOC)))$dateReadonly=(bool)$r['date_readonly'];}catch(Throwable $e){}\n    $col['max_installments_per_payment']=min(2,max(1,(int)$col['max_installments_per_payment']));\n    if($dateReadonly")
+
+          # A double-installment repayment cannot be combined with an adjustment request.
+          s = s.replace("    if($installments>0 && $wtype!=='')respond(['success'=>false,'error'=>'Repayment and Deduct/Return cannot be processed together.'],422);", "    if($installments>=2 && $wtype!=='')respond(['success'=>false,'error'=>'Withdrawal or Return is not allowed when repaying 2 installments.'],422);\n    if($installments>0 && $wtype!=='')respond(['success'=>false,'error'=>'Repayment and Deduct/Return cannot be processed together.'],422);")
+
+          # Also protect a later withdrawal/return request on the same day when 2 installments were already collected.
+          marker = "        if($wtype!==''&&$wamt>0){\n"
+          guard = "        if($wtype!==''&&$wamt>0){\n            $daily=$pdo->prepare('SELECT amount_collected,disbursement_id FROM loan_collections WHERE client_id=? AND DATE(date)=? ORDER BY id ASC LIMIT 1 FOR UPDATE');\n            $daily->execute([$clientId,$paymentDate]);\n            $dailyLoan=$daily->fetch(PDO::FETCH_ASSOC);\n            if($dailyLoan){\n                $dailyLoanRow=$loan;\n                if(!$dailyLoanRow && !empty($dailyLoan['disbursement_id'])){ $dq=$pdo->prepare('SELECT * FROM disbursements WHERE id=? LIMIT 1 FOR UPDATE');$dq->execute([$dailyLoan['disbursement_id']]);$dailyLoanRow=$dq->fetch(PDO::FETCH_ASSOC); }\n                if($dailyLoanRow){\n                    $dailyTotal=(float)$dailyLoanRow['total_payable'];\n                    $dailyNum=(int)($dailyLoanRow['num_installments']?:23);\n                    $dailyInst=$dailyNum>0?$dailyTotal/$dailyNum:0;\n                    if($dailyInst>0 && (float)$dailyLoan['amount_collected'] >= ($dailyInst*2)-0.01) throw new RuntimeException('Withdrawal or Return is not allowed after a 2-installment repayment today.');\n                }\n            }\n"
+          if marker in s and guard not in s:
+              s=s.replace(marker,guard,1)
+
+          p.write_text(s, encoding='utf-8')
+      - name: Commit API patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add api/v1/combined.php
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: enforce 2-installment API and withdrawal rule'
+          git push
