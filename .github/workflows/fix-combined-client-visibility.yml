@@ -1,0 +1,49 @@
+name: Fix combined client visibility
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-combined-client-visibility.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Align combined client visibility
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('api/v1/combined.php')
+          s = p.read_text(encoding='utf-8')
+
+          old = '''    [$scope,$scopeParams] = mobileScopeClause($user,'c');
+    $sql = "SELECT c.id,c.name,c.`union` FROM clients c WHERE {$scope} AND c.status='active'";
+    $params = $scopeParams;
+    if ($union !== '') { $sql .= ' AND c.`union`=?'; $params[]=$union; }
+'''
+
+          new = '''    [$scope,$scopeParams] = mobileScopeClause($user,'c');
+    // Match the dashboard/client list: active clients assigned to the current user's scope.
+    // mobileScopeClause also checks deleted_at, but dashboard/stats counts active clients without that condition.
+    $scope = preg_replace('/^c\\.deleted_at IS NULL AND /', '', $scope);
+    $sql = "SELECT c.id,c.name,c.`union` FROM clients c WHERE {$scope} AND c.status='active'";
+    $params = $scopeParams;
+    if ($union !== '') { $sql .= ' AND TRIM(c.`union`) = TRIM(?)'; $params[]=$union; }
+'''
+
+          if old not in s:
+              raise SystemExit('Expected combined client query was not found; no changes made.')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/v1/combined.php
+          git diff --cached --quiet || git commit -m "fix: show dashboard clients in savings and combined"
+          git push
