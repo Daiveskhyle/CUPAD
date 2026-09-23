@@ -16,6 +16,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/clients/{client}/portfolio', [ClientController::class, 'portfolio']);
     Route::post('/savings/collect', [SavingsController::class, 'collect']);
     Route::post('/loans/collect', [LoanCollectionController::class, 'collect']);
+    Route::post('/loans/disburse', [LoanDisbursementController::class, 'store']);
     Route::get('/combined/union-data', [CombinedCollectionController::class, 'unionData']);
     Route::post('/combined/save-client', [CombinedCollectionController::class, 'saveClient']);
 });
