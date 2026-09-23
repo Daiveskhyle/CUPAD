@@ -8,11 +8,14 @@ use App\Models\Disbursement;
 use App\Models\LoanCollection;
 use App\Models\Saving;
 use App\Models\SavingCollection;
+use App\Services\CombinedCollectionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class CombinedCollectionController extends Controller
 {
+    public function __construct(private CombinedCollectionService $service) {}
+
     public function unionData(Request $request)
     {
         $user = $request->user();
@@ -32,7 +35,7 @@ class CombinedCollectionController extends Controller
                         ->orWhereIn('area_id', DB::table('areas')->select('id')->where('zone_id', $user->zone_id));
                 });
             })
-            ->when($union !== '', fn ($q) => $q->whereRaw('LOWER(TRIM(COALESCE(`union`, ?))) = LOWER(TRIM(?))', ['', $union]))
+            ->when($union !== '', fn ($q) => $q->whereRaw('LOWER(TRIM(COALESCE(\`union\`, ?))) = LOWER(TRIM(?))', ['', $union]))
             ->orderBy('name')->get(['id','name','union']);
 
         $defaultInstallments = (bool) $user->is_weekly ? 24 : 23;
@@ -62,17 +65,48 @@ class CombinedCollectionController extends Controller
             return ['id'=>$client->id,'name'=>$client->name,'loan'=>$loan,'savings_balance'=>$balances->get($client->id,0),'existing'=>$existing];
         })->values();
 
-        return response()->json(['success'=>true,'data'=>$data,'settings'=>$this->settings()]);
+        return response()->json(['success'=>true,'data'=>$data,'settings'=>$this->service->settings()]);
     }
 
-    private function settings(): array
+    public function saveClient(Request $request)
     {
-        $first=fn(string $table)=>DB::table($table)->first();
-        return [
-            'collection'=>array_merge(['max_installments_per_payment'=>3,'min_installments_per_payment'=>1,'grace_period_days'=>2,'allow_partial_payments'=>0,'allow_overpayment'=>0],(array)($first('loan_collection_settings')??[])),
-            'savings'=>array_merge(['min_savings_amount'=>100,'max_savings_amount'=>500000,'allow_weekend_collection'=>0],(array)($first('savings_settings')??[])),
-            'withdrawal'=>array_merge(['max_cash_withdrawal'=>50000,'require_image_for_cash'=>1,'allow_weekend_withdrawals'=>0,'max_withdrawals_per_day'=>1,'blocked_withdrawal_types'=>'[]','buffer_cash'=>10,'buffer_withdrawal'=>10,'buffer_return'=>10],(array)($first('withdrawal_settings')??[])),
-            'date_readonly'=>(bool)(DB::table('date_control_settings')->value('date_readonly')??false),
-        ];
+        $data = $request->validate([
+            'client_id' => ['required', 'string'],
+            'date' => ['nullable', 'date'],
+            'installment' => ['nullable', 'integer', 'min:0', 'max:3'],
+            'savings_amount' => ['nullable', 'numeric', 'min:0'],
+            'withdrawal_type' => ['nullable', 'in:cash,withdrawal,return'],
+            'withdrawal_amount' => ['nullable', 'numeric', 'min:0'],
+            'picture' => ['nullable', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
+        ]);
+
+        $this->authorizeClient($request, $data['client_id']);
+
+        try {
+            return response()->json($this->service->saveClient($data, $request->user(), $request->file('picture')));
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    private function authorizeClient(Request $request, string $clientId): void
+    {
+        $user = $request->user();
+        $client = Client::query()->whereKey($clientId)->firstOrFail();
+        $role = strtolower((string) $user->role);
+
+        $allowed = match ($role) {
+            'admin' => true,
+            'co' => $client->officer_username === $user->username,
+            'bm' => (string) $client->branch_id === (string) $user->branch_id,
+            'am' => DB::table('branches')->where('id', $client->branch_id)->where('area_id', $user->area_id)->exists(),
+            'zm', 'dzm', 'tm' => DB::table('branches')->where('id', $client->branch_id)->where('zone_id', $user->zone_id)->exists(),
+            default => false,
+        };
+
+        if (!$allowed) {
+            abort(403, 'Unauthorized');
+        }
     }
 }
