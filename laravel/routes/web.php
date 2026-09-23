@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
+use App\Http\Controllers\Co\CombinedCollectionController as CoCombinedCollectionController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect()->route('login'));
@@ -21,5 +22,11 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('role:admin')->prefix('admin')->name('admin.')->group(function () {
         Route::get('/dashboard', [AdminDashboardController::class, 'index'])->name('dashboard');
+    });
+
+    Route::middleware('role:co')->prefix('co')->name('co.')->group(function () {
+        Route::get('/combined-collection', [CoCombinedCollectionController::class, 'index'])->name('combined');
+        Route::get('/combined-collection/data', [CoCombinedCollectionController::class, 'data'])->name('combined.data');
+        Route::post('/combined-collection/save', [CoCombinedCollectionController::class, 'save'])->name('combined.save');
     });
 });
