@@ -105,6 +105,7 @@ class CombinedCollectionService
                 $newPicturePath
             ) {
                 $updates = [];
+                $previousWithdrawalNotes = null;
 
                 $saving = Saving::query()
                     ->where('client_id', $clientId)
@@ -170,6 +171,7 @@ class CombinedCollectionService
 
                 // Revert the previous withdrawal before recalculating today's state.
                 if ($existingWithdrawal) {
+                    $previousWithdrawalNotes = $existingWithdrawal->notes;
                     $oldDeduct = abs((float) $existingWithdrawal->amount);
                     $currentBalance += $oldDeduct;
 
@@ -346,12 +348,7 @@ class CombinedCollectionService
                     $prefix = $withdrawalType === 'return' ? 'RTN-' : ($withdrawalType === 'cash' ? 'CSH-' : 'WTH-');
                     $notes = $newPicturePath ? 'Image: ' . basename($newPicturePath) : null;
                     if (!$notes && $withdrawalType === 'cash') {
-                        $oldCash = SavingCollection::query()
-                            ->where('client_id', $clientId)
-                            ->whereDate('date', $paymentDate)
-                            ->where('type', 'cash')
-                            ->first();
-                        $notes = $oldCash?->notes;
+                        $notes = $previousWithdrawalNotes;
                     }
 
                     $this->createSavingCollection(
