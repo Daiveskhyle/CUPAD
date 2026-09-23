@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Client;
+use App\Models\SavingCollection;
 use App\Services\SavingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,7 +12,46 @@ use Illuminate\Validation\ValidationException;
 
 class SavingsController extends Controller
 {
-    public function __construct(private SavingsService $savings) {
+    public function __construct(private SavingsService $savings) {}
+
+    public function collect(Request $request)
+    {
+        $data = $request->validate([
+            'client_id' => ['required', 'string', 'exists:clients,id'],
+            'amount' => ['required', 'numeric', 'gt:0'],
+            'date' => ['nullable', 'date'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $client = Client::query()->whereKey($data['client_id'])->whereNull('deleted_at')->firstOrFail();
+        $this->authorizeClient($request, $client);
+        $user = $request->user();
+
+        try {
+            $result = $this->savings->deposit(
+                $client->id,
+                (float) $data['amount'],
+                $user->username,
+                $data['date'] ?? null,
+                (string) ($data['notes'] ?? '')
+            );
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => collect($e->errors())->flatten()->first(),
+                'errors' => $e->errors(),
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+            'transaction_id' => $result['transaction_id'],
+            'balance' => $result['balance'],
+            'message' => 'Savings collected',
+        ]);
+    }
+
     public function withdraw(Request $request)
     {
         $data = $request->validate([
@@ -47,7 +87,8 @@ class SavingsController extends Controller
                 $saving->update(['balance' => $new]);
 
                 $transactionId = 'WD' . now()->format('YmdHis') . random_int(1000, 9999);
-                \App\Models\SavingCollection::create([
+
+                SavingCollection::create([
                     'transaction_id' => $transactionId,
                     'client_id' => $client->id,
                     'savings_id' => $saving->id,
@@ -64,7 +105,7 @@ class SavingsController extends Controller
                     ['balance' => $new, 'last_updated' => now()]
                 );
 
-                return compact('transactionId', 'new');
+                return ['transaction_id' => $transactionId, 'balance' => $new];
             });
         } catch (ValidationException $e) {
             return response()->json([
@@ -76,8 +117,8 @@ class SavingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'transaction_id' => $result['transactionId'],
-            'balance' => $result['new'],
+            'transaction_id' => $result['transaction_id'],
+            'balance' => $result['balance'],
             'message' => 'Withdrawal recorded',
         ]);
     }
@@ -100,63 +141,5 @@ class SavingsController extends Controller
         };
 
         abort_unless($allowed, 403, 'Client not found or access denied.');
-    }
-}
-
-    public function collect(Request $request)
-    {
-        $data = $request->validate([
-            'client_id' => ['required', 'string', 'exists:clients,id'],
-            'amount' => ['required', 'numeric', 'gt:0'],
-            'date' => ['nullable', 'date'],
-            'notes' => ['nullable', 'string', 'max:1000'],
-        ]);
-
-        $client = Client::query()
-            ->whereKey($data['client_id'])
-            ->whereNull('deleted_at')
-            ->firstOrFail();
-
-        $user = $request->user();
-
-        // Preserve CUPAD role visibility rules for mobile/API writes.
-        $role = strtolower((string) $user->role);
-        $allowed = match ($role) {
-            'co' => $client->officer_username === $user->username,
-            'bm' => (string) $client->branch_id === (string) $user->branch_id,
-            'am' => $client->branch_id && DB::table('branches')->where('id', $client->branch_id)->where('area_id', $user->area_id)->exists(),
-            'zm', 'dzm', 'tm' => $client->branch_id && DB::table('branches')->where('id', $client->branch_id)->where(function ($q) use ($user) {
-                $q->where('zone_id', $user->zone_id)
-                  ->orWhereIn('area_id', DB::table('areas')->select('id')->where('zone_id', $user->zone_id));
-            })->exists(),
-            'admin' => true,
-            default => false,
-        };
-
-        abort_unless($allowed, 403, 'Client not found or access denied.');
-
-        try {
-            $result = $this->savings->deposit(
-                $client->id,
-                (float) $data['amount'],
-                $user->username,
-                $data['date'] ?? null,
-                (string) ($data['notes'] ?? '')
-            );
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => collect($e->errors())->flatten()->first(),
-                'errors' => $e->errors(),
-            ], 422);
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => $result,
-            'transaction_id' => $result['transaction_id'],
-            'balance' => $result['balance'],
-            'message' => 'Savings collected',
-        ]);
     }
 }
