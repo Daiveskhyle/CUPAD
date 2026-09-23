@@ -77,6 +77,7 @@ class CombinedCollectionController extends Controller
             'savings_amount' => ['nullable', 'numeric', 'min:0'],
             'withdrawal_type' => ['nullable', 'in:cash,withdrawal,return'],
             'withdrawal_amount' => ['nullable', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:1000'],
             'picture' => ['nullable', 'image', 'mimes:jpg,jpeg,png', 'max:5120'],
         ]);
 
