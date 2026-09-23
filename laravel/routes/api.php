@@ -8,7 +8,6 @@ use App\Http\Controllers\Api\CombinedCollectionController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', fn () => response()->json(['success' => true, 'app' => 'CUPAD Laravel']));
-
 Route::post('/auth/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -18,4 +17,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/savings/collect', [SavingsController::class, 'collect']);
     Route::post('/loans/collect', [LoanCollectionController::class, 'collect']);
     Route::get('/combined/union-data', [CombinedCollectionController::class, 'unionData']);
+    Route::post('/combined/save-client', [CombinedCollectionController::class, 'saveClient']);
 });
