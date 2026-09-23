@@ -22,6 +22,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('clients', ClientController::class)->only(['index', 'show']);
     Route::get('/clients/{client}/portfolio', [ClientController::class, 'portfolio']);
+    Route::get('/clients/{client}/savings', [ClientController::class, 'savings']);
+    Route::get('/clients/{client}/loans', [ClientController::class, 'loans']);
+    Route::get('/clients/{client}/transactions', [ClientController::class, 'transactions']);
     Route::post('/clients/register', [ClientRegistrationController::class, 'store']);
 
     Route::post('/savings/collect', [SavingsController::class, 'collect']);
@@ -31,5 +34,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/loans/disburse', [LoanDisbursementController::class, 'store']);
 
     Route::get('/combined/union-data', [CombinedCollectionController::class, 'unionData']);
+    // Keep the legacy mobile contract (/combined/save) while retaining the descriptive alias.
+    Route::post('/combined/save', [CombinedCollectionController::class, 'saveClient']);
     Route::post('/combined/save-client', [CombinedCollectionController::class, 'saveClient']);
 });
