@@ -8,9 +8,10 @@ class Disbursement extends Model
 {
     protected $table = 'disbursements';
     protected $primaryKey = 'id';
-    public $incrementing = false;
-    protected $keyType = 'string';
+    public $incrementing = true;
+    protected $keyType = 'int';
     protected $guarded = [];
+
     protected $casts = [
         'principal' => 'decimal:2',
         'interest_rate' => 'decimal:2',
@@ -19,5 +20,7 @@ class Disbursement extends Model
         'date' => 'date',
         'due_date' => 'date',
         'payoff_date' => 'date',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 }
