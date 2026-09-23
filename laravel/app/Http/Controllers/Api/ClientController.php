@@ -26,7 +26,13 @@ class ClientController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $clients,
+            'data' => $clients->items(),
+            'pagination' => [
+                'total' => $clients->total(),
+                'limit' => $clients->perPage(),
+                'offset' => max(0, ($clients->currentPage() - 1) * $clients->perPage()),
+                'has_more' => $clients->hasMorePages(),
+            ],
         ]);
     }
 
@@ -38,6 +44,33 @@ class ClientController extends Controller
             'success' => true,
             'client' => $client,
         ]);
+    }
+
+    public function savings(Client $client)
+    {
+        abort_if($client->deleted_at !== null, 404);
+        return response()->json(['success' => true, 'data' => $client->savings()->orderByDesc('created_at')->get()]);
+    }
+
+    public function loans(Client $client)
+    {
+        abort_if($client->deleted_at !== null, 404);
+        return response()->json(['success' => true, 'data' => $client->disbursements()->orderByDesc('date')->get([
+            'id','principal','interest_rate','total_payable','remaining_balance','num_installments','loan_term_type','date','due_date','payoff_date','status'
+        ])]);
+    }
+
+    public function transactions(Client $client)
+    {
+        abort_if($client->deleted_at !== null, 404);
+        $savings = $client->savingCollections()->get([
+            'transaction_id','amount','type','date','balance_after','notes'
+        ])->map(fn ($row) => array_merge($row->toArray(), ['source' => 'savings']))->all();
+        $loans = $client->loanCollections()->get([
+            'transaction_id','amount_collected','type','date','remaining_balance','notes'
+        ])->map(fn ($row) => array_merge($row->toArray(), ['amount' => $row->amount_collected, 'balance_after' => $row->remaining_balance, 'source' => 'loan']))->all();
+        $rows = collect($savings)->concat($loans)->sortByDesc('date')->take(200)->values();
+        return response()->json(['success' => true, 'data' => $rows]);
     }
 
     public function portfolio(Client $client)
