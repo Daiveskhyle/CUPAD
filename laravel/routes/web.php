@@ -9,6 +9,8 @@ use App\Http\Controllers\Co\RegistrationController as CoRegistrationController;
 use App\Http\Controllers\Co\HistoryController as CoHistoryController;
 use App\Http\Controllers\Co\AnalyticsController as CoAnalyticsController;
 use App\Http\Controllers\Co\ClientsController as CoClientsController;
+use App\Http\Controllers\Bm\DashboardController as BmDashboardController;
+use App\Http\Controllers\Bm\ClientsController as BmClientsController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect()->route('login'));
@@ -26,6 +28,17 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('role:admin')->prefix('admin')->name('admin.')->group(function () {
         Route::get('/dashboard', [AdminDashboardController::class, 'index'])->name('dashboard');
+    });
+
+    Route::middleware('role:bm')->prefix('bm')->name('bm.')->group(function () {
+        Route::get('/dashboard', [BmDashboardController::class, 'index'])->name('dashboard');
+        Route::get('/activities', [BmDashboardController::class, 'activities'])->name('activities');
+        Route::get('/notifications', [BmDashboardController::class, 'notifications'])->name('notifications');
+        Route::post('/notifications/read', [BmDashboardController::class, 'markNotificationsRead'])->name('notifications.read');
+        Route::get('/clients', [BmClientsController::class, 'index'])->name('clients');
+        Route::get('/clients/data', [BmClientsController::class, 'data'])->name('clients.data');
+        Route::get('/clients/{client}/history', [BmClientsController::class, 'history'])->name('clients.history');
+        Route::put('/clients/{client}', [BmClientsController::class, 'update'])->name('clients.update');
     });
 
     Route::middleware('role:co')->prefix('co')->name('co.')->group(function () {
