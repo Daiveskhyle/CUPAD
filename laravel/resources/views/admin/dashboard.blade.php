@@ -1,0 +1,6 @@
+@extends('layouts.app') @section('title','CUPAD Admin Dashboard') @section('content')
+<div class="page-head"><h1>Admin Dashboard</h1><p>System overview and financial activity.</p></div>
+<div class="cards">@foreach([['Users',$stats['total_users']],['Clients',$stats['total_clients']],['Branches',$stats['total_branches']],['Active Sessions',$stats['active_sessions']],['Active Loans',$stats['active_loans']],['Daily Transactions',$stats['daily_transactions']]] as $card)<div class="card"><span>{{ $card[0] }}</span><strong>{{ number_format($card[1]) }}</strong></div>@endforeach
+<div class="card"><span>Revenue Today</span><strong>₦{{ number_format($stats['revenue_today'],2) }}</strong></div><div class="card"><span>Total Savings</span><strong>₦{{ number_format($stats['total_savings'],2) }}</strong></div><div class="card"><span>Monthly Collections</span><strong>₦{{ number_format($stats['monthly_collections'],2) }}</strong></div></div>
+<section class="panel"><h2>Monthly Collections</h2><div class="month-grid">@foreach($chart as $month=>$amount)<div><span>{{ \Carbon\Carbon::create()->month($month)->format('M') }}</span><strong>₦{{ number_format($amount,0) }}</strong></div>@endforeach</div></section>
+@endsection
