@@ -46,6 +46,62 @@ class AuthController extends Controller
         ]);
     }
 
+    public function profile(Request $request)
+    {
+        $data = $request->validate([
+            'full_name' => ['nullable', 'string', 'min:2', 'max:255'],
+            'name' => ['nullable', 'string', 'min:2', 'max:255'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'current_password' => ['nullable', 'string'],
+            'new_password' => ['nullable', 'string', 'min:6'],
+        ]);
+
+        $user = $request->user();
+        $name = trim((string) ($data['full_name'] ?? $data['name'] ?? ''));
+
+        if (!empty($data['new_password'])) {
+            if (empty($data['current_password'])) {
+                return response()->json(['success' => false, 'error' => 'Current password is required to change your password'], 422);
+            }
+
+            $stored = (string) $user->password;
+            $valid = str_starts_with($stored, '$2y    {
+        return response()->json(['success' => true, 'user' => $request->user()]);
+    }
+}
+) || str_starts_with($stored, '$2a    {
+        return response()->json(['success' => true, 'user' => $request->user()]);
+    }
+}
+) || str_starts_with($stored, '$argon2')
+                ? Hash::check($data['current_password'], $stored)
+                : hash_equals($stored, $data['current_password']);
+
+            if (!$valid) {
+                return response()->json(['success' => false, 'error' => 'Current password is incorrect'], 422);
+            }
+
+            $user->password = Hash::make($data['new_password']);
+        }
+
+        if ($name !== '') {
+            $user->name = $name;
+            $user->full_name = $name;
+        }
+
+        if (array_key_exists('email', $data)) {
+            $user->email = $data['email'];
+        }
+
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'data' => $user->fresh(),
+            'message' => 'Profile updated successfully',
+        ]);
+    }
+
     public function me(Request $request)
     {
         return response()->json(['success' => true, 'user' => $request->user()]);
