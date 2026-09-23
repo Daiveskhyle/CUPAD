@@ -32,7 +32,7 @@ class CombinedCollectionController extends Controller
                         ->orWhereIn('area_id', DB::table('areas')->select('id')->where('zone_id', $user->zone_id));
                 });
             })
-            ->when($union !== '', fn ($q) => $q->whereRaw('LOWER(TRIM(COALESCE(union, ?))) = LOWER(TRIM(?))', ['', $union]))
+            ->when($union !== '', fn ($q) => $q->whereRaw('LOWER(TRIM(COALESCE(`union`, ?))) = LOWER(TRIM(?))', ['', $union]))
             ->orderBy('name')->get(['id','name','union']);
 
         $defaultInstallments = (bool) $user->is_weekly ? 24 : 23;
