@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Client;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ClientController extends Controller
 {
@@ -12,7 +13,7 @@ class ClientController extends Controller
     {
         $limit = min(max((int) $request->integer('limit', 20), 1), 100);
 
-        $clients = Client::query()
+        $clients = $this->scopedQuery($request->user())
             ->whereNull('deleted_at')
             ->when($request->filled('q'), function ($query) use ($request) {
                 $term = '%' . $request->string('q') . '%';
@@ -36,8 +37,9 @@ class ClientController extends Controller
         ]);
     }
 
-    public function show(Client $client)
+    public function show(Request $request, Client $client)
     {
+        abort_unless($this->canAccess($request->user(), $client), 404);
         abort_if($client->deleted_at !== null, 404);
 
         return response()->json([
@@ -46,22 +48,25 @@ class ClientController extends Controller
         ]);
     }
 
-    public function savings(Client $client)
+    public function savings(Request $request, Client $client)
     {
+        abort_unless($this->canAccess($request->user(), $client), 404);
         abort_if($client->deleted_at !== null, 404);
         return response()->json(['success' => true, 'data' => $client->savings()->orderByDesc('created_at')->get()]);
     }
 
-    public function loans(Client $client)
+    public function loans(Request $request, Client $client)
     {
+        abort_unless($this->canAccess($request->user(), $client), 404);
         abort_if($client->deleted_at !== null, 404);
         return response()->json(['success' => true, 'data' => $client->disbursements()->orderByDesc('date')->get([
             'id','principal','interest_rate','total_payable','remaining_balance','num_installments','loan_term_type','date','due_date','payoff_date','status'
         ])]);
     }
 
-    public function transactions(Client $client)
+    public function transactions(Request $request, Client $client)
     {
+        abort_unless($this->canAccess($request->user(), $client), 404);
         abort_if($client->deleted_at !== null, 404);
         $savings = $client->savingCollections()->get([
             'transaction_id','amount','type','date','balance_after','notes'
@@ -73,8 +78,9 @@ class ClientController extends Controller
         return response()->json(['success' => true, 'data' => $rows]);
     }
 
-    public function portfolio(Client $client)
+    public function portfolio(Request $request, Client $client)
     {
+        abort_unless($this->canAccess($request->user(), $client), 404);
         abort_if($client->deleted_at !== null, 404);
 
         $savings = (float) $client->savings()->where('status', '<>', 'closed')->sum('balance');
@@ -101,5 +107,26 @@ class ClientController extends Controller
                 'total_repaid' => $repayments,
             ],
         ]);
+    }
+    private function scopedQuery($user)
+    {
+        $role = strtolower((string) $user->role);
+
+        return Client::query()
+            ->when($role === 'co', fn ($q) => $q->where('officer_username', $user->username))
+            ->when($role === 'bm', fn ($q) => $q->where('branch_id', $user->branch_id))
+            ->when($role === 'am', fn ($q) => $q->whereIn('branch_id', DB::table('branches')->select('id')->where('area_id', $user->area_id)))
+            ->when(in_array($role, ['zm', 'dzm', 'tm'], true), fn ($q) => $q->whereIn('branch_id',
+                DB::table('branches')->select('id')->where(function ($b) use ($user) {
+                    $b->where('zone_id', $user->zone_id)
+                      ->orWhereIn('area_id', DB::table('areas')->select('id')->where('zone_id', $user->zone_id));
+                })
+            ));
+    }
+
+    private function canAccess($user, Client $client): bool
+    {
+        if (strtolower((string) $user->role) === 'admin') return true;
+        return $this->scopedQuery($user)->whereKey($client->getKey())->exists();
     }
 }
