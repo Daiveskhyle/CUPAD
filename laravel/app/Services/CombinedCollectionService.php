@@ -24,6 +24,7 @@ class CombinedCollectionService
         $savingAmount = max(0, (float) ($data['savings_amount'] ?? 0));
         $withdrawalType = (string) ($data['withdrawal_type'] ?? '');
         $withdrawalAmount = max(0, (float) ($data['withdrawal_amount'] ?? 0));
+        $requestNotes = trim((string) ($data['notes'] ?? ''));
         $settings = $this->settings();
         $weekly = (bool) ($user->is_weekly ?? false);
         $newPicturePath = null;
@@ -101,7 +102,7 @@ class CombinedCollectionService
         try {
             return DB::transaction(function () use (
                 $client, $user, $clientId, $paymentDateTime, $paymentDate, $loanInstallments,
-                $savingAmount, $withdrawalType, $withdrawalAmount, $settings, $weekly,
+                $savingAmount, $withdrawalType, $withdrawalAmount, $requestNotes, $settings, $weekly,
                 $newPicturePath
             ) {
                 $updates = [];
@@ -346,7 +347,7 @@ class CombinedCollectionService
                     }
 
                     $prefix = $withdrawalType === 'return' ? 'RTN-' : ($withdrawalType === 'cash' ? 'CSH-' : 'WTH-');
-                    $notes = $newPicturePath ? 'Image: ' . basename($newPicturePath) : null;
+                    $notes = $newPicturePath ? 'Image: ' . basename($newPicturePath) : ($requestNotes !== '' ? $requestNotes : null);
                     if (!$notes && $withdrawalType === 'cash') {
                         $notes = $previousWithdrawalNotes;
                     }
