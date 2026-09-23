@@ -11,15 +11,17 @@ class DashboardController extends Controller
         $user = request()->user();
         $role = strtolower((string) $user->role);
 
+        if ($role === 'bm') {
+            return redirect()->route('bm.dashboard');
+        }
+
         $clientQuery = DB::table('clients')->whereNull('deleted_at')->where('status', 'active');
 
         match ($role) {
             'co' => $clientQuery->where('officer_username', $user->username),
-            'bm' => $clientQuery->where('branch_id', $user->branch_id),
             'am' => $clientQuery->whereIn('branch_id', DB::table('branches')->where('area_id', $user->area_id)->pluck('id')),
             'zm', 'dzm', 'tm' => $clientQuery->whereIn('branch_id', DB::table('branches')->where(function ($q) use ($user) {
-                $q->where('zone_id', $user->zone_id)
-                  ->orWhere('area_id', $user->area_id);
+                $q->where('zone_id', $user->zone_id)->orWhere('area_id', $user->area_id);
             })->pluck('id')),
             default => null,
         };
