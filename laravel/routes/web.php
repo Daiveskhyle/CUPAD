@@ -8,6 +8,7 @@ use App\Http\Controllers\Co\CombinedCollectionController as CoCombinedCollection
 use App\Http\Controllers\Co\RegistrationController as CoRegistrationController;
 use App\Http\Controllers\Co\HistoryController as CoHistoryController;
 use App\Http\Controllers\Co\AnalyticsController as CoAnalyticsController;
+use App\Http\Controllers\Co\ClientsController as CoClientsController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect()->route('login'));
@@ -29,6 +30,10 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('role:co')->prefix('co')->name('co.')->group(function () {
         Route::get('/combined-collection', [CoCombinedCollectionController::class, 'index'])->name('combined');
+        Route::get('/clients', [CoClientsController::class, 'index'])->name('clients');
+        Route::get('/clients/data', [CoClientsController::class, 'data'])->name('clients.data');
+        Route::get('/clients/{client}/history', [CoClientsController::class, 'history'])->name('clients.history');
+        Route::put('/clients/{client}', [CoClientsController::class, 'update'])->name('clients.update');
         Route::get('/combined-collection/data', [CoCombinedCollectionController::class, 'data'])->name('combined.data');
         Route::post('/combined-collection/save', [CoCombinedCollectionController::class, 'save'])->name('combined.save');
         Route::get('/registration', [CoRegistrationController::class, 'index'])->name('registration');
