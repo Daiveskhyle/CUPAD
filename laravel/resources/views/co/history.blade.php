@@ -1,0 +1,21 @@
+@extends('layouts.app')
+@section('title','CO History')
+@section('content')
+<div class="max-w-5xl mx-auto px-4 py-6">
+ <div class="flex flex-wrap justify-between gap-3 items-end mb-6"><div><h1 class="text-2xl font-extrabold">Transaction History</h1><p class="text-sm text-gray-500">All transactions for your client portfolio</p></div><a href="{{ route('co.analytics') }}" class="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold">Analytics</a></div>
+ <div class="grid grid-cols-2 gap-4 mb-5"><div class="rounded-2xl p-5 text-white bg-gradient-to-br from-blue-500 to-blue-700"><div class="text-xs uppercase opacity-80">Total Volume</div><div id="vol" class="text-2xl font-extrabold mt-1">₦0</div></div><div class="rounded-2xl p-5 text-white bg-gradient-to-br from-violet-500 to-violet-700"><div class="text-xs uppercase opacity-80">Transactions</div><div id="count" class="text-2xl font-extrabold mt-1">0</div></div></div>
+ <div class="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 mb-5">
+  <div class="grid md:grid-cols-4 gap-3"><input id="search" class="rounded-xl border p-3 dark:bg-slate-800" placeholder="Search client, ID or amount"><input id="from" type="date" class="rounded-xl border p-3 dark:bg-slate-800"><input id="to" type="date" class="rounded-xl border p-3 dark:bg-slate-800"><button onclick="loadHistory(1)" class="rounded-xl bg-blue-600 text-white font-semibold">Filter</button></div>
+  <div class="flex gap-2 overflow-x-auto mt-3"><button data-type="all" class="chip active">All</button><button data-type="today" class="chip">Today</button><button data-type="saving" class="chip">Savings</button><button data-type="withdrawal" class="chip">Withdrawals</button><button data-type="repayment" class="chip">Repayments</button><button data-type="disbursement" class="chip">Disbursements</button></div>
+ </div>
+ <div id="list" class="space-y-3"></div><div class="flex justify-center gap-3 mt-5"><button id="prev" onclick="loadHistory(page-1)" class="px-4 py-2 rounded-xl border">Previous</button><button id="next" onclick="loadHistory(page+1)" class="px-4 py-2 rounded-xl bg-blue-600 text-white">Next</button></div>
+</div>
+<style>.chip{padding:.45rem 1rem;border-radius:999px;background:#f1f5f9;font-size:.8rem;font-weight:700;white-space:nowrap}.chip.active{background:#3b82f6;color:#fff}.dark .chip{background:#1e293b}</style>
+<script>
+let page=1,type='all';
+const money=n=>'₦'+Number(n||0).toLocaleString('en-NG',{maximumFractionDigits:2});
+document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));b.classList.add('active');type=b.dataset.type;loadHistory(1)});
+async function loadHistory(p=1){if(p<1)return;const q=new URLSearchParams({page:p,perPage:20,type,search:document.getElementById('search').value,startDate:document.getElementById('from').value,endDate:document.getElementById('to').value});const r=await fetch('{{ route('co.history.data') }}?'+q);const d=await r.json();if(!d.success)return;page=p;document.getElementById('vol').textContent=money(d.totalVolume);document.getElementById('count').textContent=d.totalCount;document.getElementById('prev').disabled=page===1;document.getElementById('next').disabled=!d.hasMore;document.getElementById('list').innerHTML=d.data.map(x=>'<div class="flex items-center gap-3 p-4 rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900"><div class="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 flex items-center justify-center"><i class="fas '+x.icon+'"></i></div><div class="min-w-0 flex-1"><div class="font-bold truncate">'+esc(x.client)+'</div><div class="text-xs text-gray-500">'+esc(x.type)+' · '+new Date(x.date).toLocaleString()+'</div><div class="text-[11px] text-gray-400 font-mono">'+esc(x.id)+'</div></div><div class="font-extrabold">₦'+Number(x.amount||0).toLocaleString('en-NG',{maximumFractionDigits:2})+'</div></div>').join('')||'<div class="p-8 text-center text-gray-500">No transactions found.</div>'}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}loadHistory();
+</script>
+@endsection
