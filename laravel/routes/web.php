@@ -6,6 +6,8 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\Co\CombinedCollectionController as CoCombinedCollectionController;
 use App\Http\Controllers\Co\RegistrationController as CoRegistrationController;
+use App\Http\Controllers\Co\HistoryController as CoHistoryController;
+use App\Http\Controllers\Co\AnalyticsController as CoAnalyticsController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect()->route('login'));
@@ -33,5 +35,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/registration/stats', [CoRegistrationController::class, 'stats'])->name('registration.stats');
         Route::get('/registration/duplicate', [CoRegistrationController::class, 'checkDuplicate'])->name('registration.duplicate');
         Route::post('/registration', [CoRegistrationController::class, 'store'])->name('registration.store');
+        Route::get('/history', [CoHistoryController::class, 'index'])->name('history');
+        Route::get('/history/data', [CoHistoryController::class, 'data'])->name('history.data');
+        Route::get('/analytics', [CoAnalyticsController::class, 'index'])->name('analytics');
+        Route::get('/analytics/data', [CoAnalyticsController::class, 'data'])->name('analytics.data');
+        Route::get('/analytics/union-details', [CoAnalyticsController::class, 'unionDetails'])->name('analytics.union-details');
     });
 });
