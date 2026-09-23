@@ -1,0 +1,3 @@
+@extends('layouts.app') @section('title','Clients') @section('content')
+<div class="page-head"><h1>Clients</h1><p>Manage CUPAD client records.</p></div><form class="search" method="GET"><input name="q" value="{{ request('q') }}" placeholder="Search name, phone or ID"><button>Search</button></form>
+<div class="panel table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Status</th><th></th></tr></thead><tbody>@forelse($clients as $client)<tr><td>{{ $client->id }}</td><td>{{ $client->name }}</td><td>{{ $client->phone }}</td><td>{{ $client->status }}</td><td><a href="{{ route('clients.show',$client) }}">View</a></td></tr>@empty<tr><td colspan="5">No clients found.</td></tr>@endforelse</tbody></table>{{ $clients->links() }}</div>@endsection
