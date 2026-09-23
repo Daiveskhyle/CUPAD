@@ -16,7 +16,10 @@ class ClientRegistrationController extends Controller
             'name'=>['required','string','max:255'],
             'phone'=>['required','string','max:50'],
             'email'=>['nullable','email','max:255'],
+            'address'=>['nullable','string','max:500'],
+            'union'=>['nullable','string','max:255'],
             'client_type'=>['nullable','in:individual,group'],
+            'registration_fee'=>['nullable','numeric','min:0'],
             'branch_id'=>['nullable'],
         ]);
 
@@ -31,6 +34,8 @@ class ClientRegistrationController extends Controller
             'name'=>$data['name'],
             'phone'=>$data['phone'],
             'email'=>$data['email']??null,
+            'address'=>$data['address']??null,
+            'union'=>$data['union']??null,
             'branch_id'=>$branchId,
             'officer_username'=>$user->username,
             'client_type'=>$data['client_type']??'individual',
