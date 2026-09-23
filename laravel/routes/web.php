@@ -5,6 +5,7 @@ use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\Co\CombinedCollectionController as CoCombinedCollectionController;
+use App\Http\Controllers\Co\RegistrationController as CoRegistrationController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect()->route('login'));
@@ -28,5 +29,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/combined-collection', [CoCombinedCollectionController::class, 'index'])->name('combined');
         Route::get('/combined-collection/data', [CoCombinedCollectionController::class, 'data'])->name('combined.data');
         Route::post('/combined-collection/save', [CoCombinedCollectionController::class, 'save'])->name('combined.save');
+        Route::get('/registration', [CoRegistrationController::class, 'index'])->name('registration');
+        Route::get('/registration/stats', [CoRegistrationController::class, 'stats'])->name('registration.stats');
+        Route::get('/registration/duplicate', [CoRegistrationController::class, 'checkDuplicate'])->name('registration.duplicate');
+        Route::post('/registration', [CoRegistrationController::class, 'store'])->name('registration.store');
     });
 });
