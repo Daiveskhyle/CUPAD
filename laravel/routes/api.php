@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\SavingsController;
 use App\Http\Controllers\Api\LoanCollectionController;
 use App\Http\Controllers\Api\CombinedCollectionController;
+use App\Http\Controllers\Api\ClientRegistrationController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', fn () => response()->json(['success' => true, 'app' => 'CUPAD Laravel']));
@@ -14,6 +15,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::apiResource('clients', ClientController::class)->only(['index', 'show']);
     Route::get('/clients/{client}/portfolio', [ClientController::class, 'portfolio']);
+    Route::post('/clients/register', [ClientRegistrationController::class, 'store']);
     Route::post('/savings/collect', [SavingsController::class, 'collect']);
     Route::post('/loans/collect', [LoanCollectionController::class, 'collect']);
     Route::post('/loans/disburse', [LoanDisbursementController::class, 'store']);
